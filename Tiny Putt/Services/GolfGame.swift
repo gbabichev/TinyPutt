@@ -105,6 +105,7 @@ final class GolfGame {
     @ObservationIgnored private var lastBounceSound = 0.0
     @ObservationIgnored private var lastWindmillSound = -1.0
     @ObservationIgnored private var lastBounceHaptic = -1.0
+    @ObservationIgnored private var lastCupRattle = -1.0
     @ObservationIgnored private var sceneryCache: (key: String, items: [SceneryItem])?
 
     @ObservationIgnored private let sounds = SoundEngine()
@@ -325,6 +326,7 @@ final class GolfGame {
             var events: [SimEvent] = []
             let ended = sim.advance(by: dt, events: &events)
             handle(events)
+            if !ended, phase == .rolling { rattleNearCup() }
             if !ended, phase == .rolling, !sim.isMoving {
                 lastRest = sim.pos
                 phase = .aiming
@@ -341,6 +343,19 @@ final class GolfGame {
                 phase = .aiming
             }
         }
+    }
+
+    /// A light rattle while the ball rolls close to the cup (further out when there is a dish or a
+    /// hill around it): quicker the faster the ball, and higher the closer it gets.
+    private func rattleNearCup() {
+        let reach = hole.bowls.first { $0.center.distance(to: hole.cup) < 30 }.map { $0.radius * 0.7 } ?? 55
+        let d = sim.pos.distance(to: hole.cup)
+        let speed = sim.vel.length
+        guard d < reach, d > 6, speed > 30 else { return }
+        let interval = 0.2 - 0.12 * min(1, speed / 400)
+        guard animTime - lastCupRattle > interval else { return }
+        lastCupRattle = animTime
+        sounds.play(.cupRattle(closeness: 1 - d / reach))
     }
 
     private func shotStartedByWindmill() {

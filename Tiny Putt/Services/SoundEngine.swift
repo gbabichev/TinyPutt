@@ -14,6 +14,8 @@ final class SoundEngine {
         /// `impact` runs from 0 to 1.
         case bounce(impact: Double)
         case bumper
+        /// The ball is rolling close to the cup. `closeness` runs from 0 (far) to 1 (at the rim).
+        case cupRattle(closeness: Double)
         case cup
         case splash
         case lava
@@ -33,6 +35,7 @@ final class SoundEngine {
     private var hitBuffers: [AVAudioPCMBuffer] = []
     private var bounceBuffers: [AVAudioPCMBuffer] = []
     private var bumperBuffer: AVAudioPCMBuffer?
+    private var rattleBuffers: [AVAudioPCMBuffer] = []
     private var cupBuffer: AVAudioPCMBuffer?
     private var splashBuffer: AVAudioPCMBuffer?
     private var lavaBuffer: AVAudioPCMBuffer?
@@ -50,6 +53,7 @@ final class SoundEngine {
         hitBuffers = [0.15, 0.5, 0.9].map(makeHit)
         bounceBuffers = [(330.0, 0.15), (440.0, 0.5), (550.0, 0.9)].map { makeBounce(frequency: $0.0, impact: $0.1) }
         bumperBuffer = makeBumper()
+        rattleBuffers = [900, 1250, 1700].map(makeRattle)
         cupBuffer = makeCup()
         splashBuffer = makeSplash()
         lavaBuffer = makeLava()
@@ -85,6 +89,7 @@ final class SoundEngine {
         case .hit(let power): buffer = hitBuffers[min(2, Int(power * 3))]
         case .bounce(let impact): buffer = bounceBuffers[min(2, Int(impact * 3))]
         case .bumper: buffer = bumperBuffer
+        case .cupRattle(let closeness): buffer = rattleBuffers[min(2, Int(closeness * 3))]
         case .cup: buffer = cupBuffer
         case .splash: buffer = splashBuffer
         case .lava: buffer = lavaBuffer
@@ -210,18 +215,46 @@ final class SoundEngine {
         }
     }
 
-    /// A bright little bell arpeggio for sinking the putt.
+    /// One tick of a ball rattling round the rim of the cup. Short and quiet, a little higher the
+    /// closer the ball is.
+    private func makeRattle(frequency: Double) -> AVAudioPCMBuffer {
+        var lowpass = 0.0
+        return render(duration: 0.07) { t in
+            let raw = Double.random(in: -1...1)
+            lowpass += (raw - lowpass) * 0.3
+            let click = (raw - lowpass) * exp(-t * 600) * 0.28
+            let ping = sin(2 * Double.pi * frequency * t) * exp(-t * 150) * 0.22
+            return click + ping
+        }
+    }
+
+    /// A ball dropping into a cup: it bounces around the bottom a few times, quicker and quieter
+    /// each time, then settles with a dull knock and a small metallic tick.
     private func makeCup() -> AVAudioPCMBuffer {
-        let notes: [Double] = [523.25, 659.25, 783.99, 1046.5]
-        return render(duration: 1.1) { t in
+        let bounces: [(time: Double, gain: Double, pitch: Double)] = [
+            (0.00, 1.00, 540), (0.07, 0.72, 500), (0.13, 0.52, 470), (0.18, 0.36, 450), (0.22, 0.24, 430), (0.25, 0.14, 420),
+        ]
+        var lowpass = 0.0
+        return render(duration: 0.8) { t in
             var value = 0.0
-            for (i, f) in notes.enumerated() {
-                let local = t - Double(i) * 0.09
-                guard local > 0 else { continue }
-                let env = exp(-local * 6)
-                value += (sin(2 * Double.pi * f * local) + 0.3 * sin(4 * Double.pi * f * local)) * env
+            // Hollow taps off the sides of the cup.
+            for b in bounces where t >= b.time {
+                let lt = t - b.time
+                value += (sin(2 * Double.pi * b.pitch * lt) * exp(-lt * 70)) * b.gain * 0.42
+                let raw = Double.random(in: -1...1)
+                lowpass += (raw - lowpass) * 0.25
+                value += (raw - lowpass) * exp(-lt * 500) * b.gain * 0.2
             }
-            return value * 0.22
+            // The ball settles: a low knock, then a faint tick off the metal sleeve.
+            if t >= 0.27 {
+                let lt = t - 0.27
+                value += sin(2 * Double.pi * (170 - 30 * min(1, lt * 15)) * lt) * exp(-lt * 38) * 0.55
+            }
+            if t >= 0.29 {
+                let lt = t - 0.29
+                value += sin(2 * Double.pi * 2300 * lt) * exp(-lt * 22) * 0.12
+            }
+            return value
         }
     }
 }

@@ -18,6 +18,8 @@ struct RootView: View {
         .animation(.easeInOut(duration: 0.25), value: screen)
         #if os(macOS)
         .frame(minWidth: 420, minHeight: 420)
+        // Let the picture show right up to the top of the window, instead of a solid title bar.
+        .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
         #endif
     }
 
