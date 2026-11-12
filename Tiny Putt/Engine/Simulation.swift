@@ -14,7 +14,7 @@ nonisolated enum Shot {
     /// the same on every screen size.
     static let maxPull: Double = 170
     static let minPull: Double = 14
-    static let minSpeed: Double = 150
+    static let minSpeed: Double = 120
     static let maxSpeed: Double = 950
 
     /// 0...1
@@ -23,7 +23,7 @@ nonisolated enum Shot {
     }
 
     static func speed(forPull length: Double) -> Double {
-        minSpeed + (maxSpeed - minSpeed) * pow(power(forPull: length), 1.25)
+        minSpeed + (maxSpeed - minSpeed) * power(forPull: length)
     }
 }
 

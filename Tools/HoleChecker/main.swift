@@ -73,7 +73,7 @@ if let level = options.solve {
         let degrees = step.shot.angle * 180 / .pi
         print(String(format: "  stroke %d: from (%.0f, %.0f) angle %.0f° speed %.0f (pull %.0f%% of max) window offset %.2f",
                      i + 1, step.from.x, step.from.y, degrees, step.shot.speed,
-                     100 * pow(max(0, (step.shot.speed - Shot.minSpeed) / (Shot.maxSpeed - Shot.minSpeed)), 1 / 1.25), step.shot.offset))
+                     100 * max(0, (step.shot.speed - Shot.minSpeed) / (Shot.maxSpeed - Shot.minSpeed)), step.shot.offset))
         routes.append(checker.trace(from: step.from, step.shot))
     }
     if let sheet = options.sheet { writeSheet([hole], to: sheet, columns: 1, cell: 900, paths: routes) }

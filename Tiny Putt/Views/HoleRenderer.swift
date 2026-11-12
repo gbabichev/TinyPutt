@@ -430,24 +430,27 @@ enum HoleRenderer {
         if let preview = game.estimate, preview.points.count > 1 {
             let skip = Double(ringR) + 5              // start just outside the power ring
             let spacing = 9.0
-            var carried = 0.0
-            var travelled = 0.0
             var total = 0.0
             for i in 1..<preview.points.count { total += preview.points[i].distance(to: preview.points[i - 1]) }
+            // Each dot sits at a fixed distance along the route and looks the same however long
+            // the route is, so a wobbling pull never makes the trail flicker. Only the last dot
+            // fades in or out smoothly as the end of the route moves past it.
+            var travelled = 0.0
+            var nextDot = spacing
             for i in 1..<preview.points.count {
                 let a = preview.points[i - 1], b = preview.points[i]
                 let seg = a.distance(to: b)
                 guard seg > 0 else { continue }
-                var d = spacing - carried
-                while d <= seg {
-                    let p = a + (b - a) * (d / seg)
-                    if p.distance(to: game.sim.pos) > skip {
-                        let t = min(1, (travelled + d) / max(total, 1))
-                        w.fill(w.circle(p.cg, CGFloat(2.4 - 1.0 * t)), with: .color(tint.opacity(1 - 0.8 * t)))
+                while nextDot <= travelled + seg {
+                    let p = a + (b - a) * ((nextDot - travelled) / seg)
+                    if nextDot > skip {
+                        let far = min(1, nextDot / 170)
+                        let end = max(0, min(1, (total - nextDot) / 14))
+                        let ease = end * end * (3 - 2 * end)
+                        w.fill(w.circle(p.cg, CGFloat(2.4 - 1.0 * far)), with: .color(tint.opacity((1 - 0.75 * far) * ease)))
                     }
-                    d += spacing
+                    nextDot += spacing
                 }
-                carried = seg - (d - spacing)
                 travelled += seg
             }
         }
