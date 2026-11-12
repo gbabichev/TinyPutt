@@ -50,7 +50,7 @@ nonisolated struct Simulation: Sendable {
     static let mud = 1500.0
     static let ice = 35.0
     /// The least speed a windmill blade gives a ball it hits, away from the blade.
-    static let bladeFlick = 240.0
+    static let bladeFlick = 120.0
 
     let hole: Hole
     var pos: Vec
