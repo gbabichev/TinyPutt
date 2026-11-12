@@ -39,8 +39,9 @@ enum HoleRenderer {
         // Hazards and surfaces are cut off at the edge of the course, never spilling over the rim.
         var onCourse = w
         onCourse.clip(to: path(hole.outline))
+        // Dishes and hills lie under the other surfaces, so water and sand are never covered.
+        for bowl in hole.bowls { drawBowl(&onCourse, bowl, time: time) }
         for patch in hole.patches { drawPatch(&onCourse, patch, pal: pal, time: time) }
-        for bowl in hole.bowls { drawBowl(&onCourse, bowl) }
         drawTee(&w, hole: hole)
         drawCup(&w, hole: hole)
         // Walls inside the course end flush with its edge.
@@ -300,22 +301,41 @@ enum HoleRenderer {
 
     // MARK: - Gadgets
 
-    /// A dish in the ground: paler in the middle, darker toward the rim, with contour rings.
-    private static func drawBowl(_ w: inout GraphicsContext, _ b: Bowl) {
+    /// A dish or a hill. A dish is darker in the middle with arrows drifting in (the ground slopes
+    /// down toward the cup, so the ball rolls that way). A hill is lighter on top with arrows
+    /// drifting out (the ground slopes down away from the cup).
+    private static func drawBowl(_ w: inout GraphicsContext, _ b: Bowl, time: Double) {
         let c = b.center.cg
         let r = CGFloat(b.radius)
         let disc = w.circle(c, r)
-        w.fill(disc, with: .radialGradient(
-            Gradient(stops: [
-                .init(color: .white.opacity(0.30), location: 0),
-                .init(color: .white.opacity(0.10), location: 0.55),
-                .init(color: .black.opacity(0.14), location: 1),
-            ]),
-            center: c, startRadius: 0, endRadius: r))
+        let stops: [Gradient.Stop] = b.isHill
+            ? [.init(color: .white.opacity(0.30), location: 0),
+               .init(color: .white.opacity(0.10), location: 0.55),
+               .init(color: .black.opacity(0.14), location: 1)]
+            : [.init(color: .black.opacity(0.20), location: 0),
+               .init(color: .black.opacity(0.06), location: 0.6),
+               .init(color: .white.opacity(0.14), location: 1)]
+        w.fill(disc, with: .radialGradient(Gradient(stops: stops), center: c, startRadius: 0, endRadius: r))
         w.stroke(disc, with: .color(.black.opacity(0.10)), lineWidth: 2)
         for f in [0.32, 0.58, 0.84] {
             w.stroke(w.circle(c, r * f), with: .color(.white.opacity(0.42)),
                      style: StrokeStyle(lineWidth: 1.5, dash: [6, 5]))
+        }
+        let count = 10
+        for k in 0..<count {
+            let angle = Double(k) / Double(count) * 2 * .pi + 0.2
+            let outward = Vec(cos(angle), sin(angle))
+            let phase = (time * 0.32 + Double(k % 2) * 0.5).truncatingRemainder(dividingBy: 1)
+            let radius = b.radius * (b.isHill ? 0.35 + 0.55 * phase : 0.9 - 0.55 * phase)
+            let fade = sin(phase * .pi)
+            let p = b.center + outward * radius
+            let heading = b.isHill ? outward : outward * -1
+            var chevron = Path()
+            chevron.move(to: (p - heading * 6 + heading.perp * 9).cg)
+            chevron.addLine(to: (p + heading * 5).cg)
+            chevron.addLine(to: (p - heading * 6 - heading.perp * 9).cg)
+            w.stroke(chevron, with: .color(.white.opacity(0.8 * fade)),
+                     style: StrokeStyle(lineWidth: 3.2, lineCap: .round, lineJoin: .round))
         }
     }
 

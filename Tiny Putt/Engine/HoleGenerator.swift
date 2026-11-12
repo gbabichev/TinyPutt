@@ -145,11 +145,14 @@ nonisolated enum HoleGenerator {
         fin.finish(finale, rng: &rng)
         blocks += fin.blocks; patches += fin.patches; bumpers += fin.bumpers
 
-        // About one hole in three has the cup in a dish. Decided from the seed, not the random
-        // stream, so every other choice for a seed stays as it was.
+        // About one hole in three has the cup in a dish or on a hill. Decided from the seed, not
+        // the random stream, so every other choice for a seed stays as it was.
         var bowls: [Bowl] = []
-        if (seed &* 0x9E37_79B9_7F4A_7C15) >> 61 < 3 {
-            bowls.append(Bowl(center: cup, radius: min(125, max(85, cupFrame.width * 0.85))))
+        let mix = seed &* 0x9E37_79B9_7F4A_7C15
+        if mix >> 61 < 3 {
+            let radius = min(125, max(85, cupFrame.width * 0.85))
+            let hill = (mix >> 30) & 1 == 1
+            bowls.append(Bowl(center: cup, radius: radius, strength: hill ? -330 : 340))
         }
 
         var hole = Hole(

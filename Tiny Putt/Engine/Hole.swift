@@ -74,13 +74,16 @@ nonisolated struct Magnet: Sendable {
     var strength: Double = 700
 }
 
-/// A dish in the ground: the ball rolls down toward the middle, so a shot passing by bends.
-/// The pull grows toward the rim and fades to nothing at the centre.
+/// A dish or a hill in the ground. A dish pulls the ball toward its middle, so a shot passing by
+/// bends in; a hill (negative strength) pushes it away, so a cup on top is hard to hold. The
+/// push grows toward the rim and fades to nothing at the centre.
 nonisolated struct Bowl: Sendable {
     var center: Vec
     var radius: Double = 115
-    /// Pull at the rim, in units per second squared (grass friction is 300).
-    var strength: Double = 280
+    /// Push at the rim, in units per second squared (grass friction is 300, so a slope past that moves a resting ball). Negative is a hill.
+    var strength: Double = 340
+
+    var isHill: Bool { strength < 0 }
 }
 
 nonisolated struct Segment: Sendable {

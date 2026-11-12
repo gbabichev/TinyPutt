@@ -52,6 +52,8 @@ nonisolated struct Simulation: Sendable {
     /// How much stronger a slope belt pushes than its listed strength. Grass friction is 300, so
     /// a belt has to be well past that to feel like a conveyor.
     static let beltBoost = 2.3
+    /// The outer share of a dish or hill over which its pull eases in from nothing.
+    static let bowlRim = 0.3
 
     let hole: Hole
     var pos: Vec
@@ -117,7 +119,13 @@ nonisolated struct Simulation: Sendable {
         for b in hole.bowls {
             let d = b.center - pos
             let dist = d.length
-            if dist < b.radius, dist > 1 { accel += d / dist * (b.strength * dist / b.radius) }
+            if dist < b.radius, dist > 1 {
+                // Linear toward the centre, but eased in over the outer rim so a ball that only
+                // just crosses the edge is not yanked down the slope.
+                let u = dist / b.radius
+                let ease = min(1, (1 - u) / Self.bowlRim)
+                accel += d / dist * (b.strength * u * ease * ease * (3 - 2 * ease))
+            }
         }
         // A shot that goes on too long is slowed so it always ends.
         if shotTime > 14 { friction *= 6 }

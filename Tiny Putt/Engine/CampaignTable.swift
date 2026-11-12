@@ -19,16 +19,16 @@ nonisolated enum CampaignTable {
 
     /// Levels 11 and up (levels 1-10 are the hand-made holes).
     static let entries: [Entry] = [
-        Entry(seed: 1100121, theme: 0, par: 3, template: 0, middle: 0),
+        Entry(seed: 1100019, theme: 0, par: 3, template: 0, middle: 0),
         Entry(seed: 1200210, theme: 1, par: 3, template: 5, middle: -1),
-        Entry(seed: 1300002, theme: 2, par: 3, template: 2, middle: 10),
-        Entry(seed: 1400068, theme: 0, par: 3, template: 8, middle: 2),
+        Entry(seed: 1300000, theme: 2, par: 3, template: 2, middle: 10),
+        Entry(seed: 1400014, theme: 0, par: 3, template: 8, middle: 2),
         Entry(seed: 1500000, theme: 1, par: 4, template: 4, middle: 7),
-        Entry(seed: 1600104, theme: 2, par: 3, template: 1, middle: 12),
+        Entry(seed: 1600079, theme: 2, par: 3, template: 1, middle: 12),
         Entry(seed: 1700200, theme: 0, par: 4, template: 7, middle: -1),
         Entry(seed: 1800000, theme: 1, par: 3, template: 3, middle: 9),
         Entry(seed: 1900021, theme: 2, par: 3, template: 0, middle: 1),
-        Entry(seed: 2000155, theme: 0, par: 3, template: 5, middle: 6),
+        Entry(seed: 2000088, theme: 0, par: 3, template: 5, middle: 6),
         Entry(seed: 2100000, theme: 3, par: 3, template: 2, middle: 11),
         Entry(seed: 2200201, theme: 2, par: 3, template: 8, middle: -1),
         Entry(seed: 2300000, theme: 0, par: 3, template: 4, middle: 8),
@@ -46,7 +46,7 @@ nonisolated enum CampaignTable {
         Entry(seed: 3500000, theme: 1, par: 3, template: 3, middle: 4),
         Entry(seed: 3600002, theme: 2, par: 4, template: 6, middle: 9),
         Entry(seed: 3700000, theme: 3, par: 3, template: 4, middle: 2),
-        Entry(seed: 3800058, theme: 0, par: 4, template: 0, middle: 7),
+        Entry(seed: 3800118, theme: 0, par: 4, template: 0, middle: 7),
         Entry(seed: 3900091, theme: 2, par: 4, template: 5, middle: 12),
         Entry(seed: 4000108, theme: 3, par: 4, template: 1, middle: 4),
         Entry(seed: 4100201, theme: 1, par: 3, template: 7, middle: -1),
@@ -57,7 +57,7 @@ nonisolated enum CampaignTable {
         Entry(seed: 4600005, theme: 0, par: 4, template: 4, middle: 8),
         Entry(seed: 4700000, theme: 1, par: 4, template: 0, middle: 0),
         Entry(seed: 4800200, theme: 3, par: 3, template: 5, middle: -1),
-        Entry(seed: 4900230, theme: 0, par: 3, template: 1, middle: -1),
+        Entry(seed: 4900200, theme: 0, par: 3, template: 1, middle: -1),
         Entry(seed: 5000130, theme: 2, par: 5, template: 7, middle: 3),
     ]
 }
