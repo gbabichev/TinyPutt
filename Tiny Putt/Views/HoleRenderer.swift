@@ -448,28 +448,27 @@ enum HoleRenderer {
 
         // The route of the shot as a trail of dots in the same colour, fading away along its length.
         if let preview = game.estimate, preview.points.count > 1 {
-            let skip = Double(ringR) + 5              // start just outside the power ring
-            let spacing = 9.0
             var total = 0.0
             for i in 1..<preview.points.count { total += preview.points[i].distance(to: preview.points[i - 1]) }
             // Each dot sits at a fixed distance along the route and looks the same however long
             // the route is, so a wobbling pull never makes the trail flicker. Only the last dot
-            // fades in or out smoothly as the end of the route moves past it.
+            // fades in or out smoothly as the end of the route moves past it. The first dot sits
+            // just outside the power ring, so even a short route (a soft pull, or sand and mud
+            // that stop the ball quickly) still shows a few dots.
+            var nextDot = Double(ringR) + 3
+            let gap = 9.0
             var travelled = 0.0
-            var nextDot = spacing
             for i in 1..<preview.points.count {
                 let a = preview.points[i - 1], b = preview.points[i]
                 let seg = a.distance(to: b)
                 guard seg > 0 else { continue }
                 while nextDot <= travelled + seg {
                     let p = a + (b - a) * ((nextDot - travelled) / seg)
-                    if nextDot > skip {
-                        let far = min(1, nextDot / 170)
-                        let end = max(0, min(1, (total - nextDot) / 14))
-                        let ease = end * end * (3 - 2 * end)
-                        w.fill(w.circle(p.cg, CGFloat(2.4 - 1.0 * far)), with: .color(tint.opacity((1 - 0.75 * far) * ease)))
-                    }
-                    nextDot += spacing
+                    let far = min(1, nextDot / 170)
+                    let end = max(0, min(1, (total - nextDot + 4) / 8))
+                    let ease = end * end * (3 - 2 * end)
+                    w.fill(w.circle(p.cg, CGFloat(2.4 - 1.0 * far)), with: .color(tint.opacity((1 - 0.75 * far) * ease)))
+                    nextDot += gap
                 }
                 travelled += seg
             }

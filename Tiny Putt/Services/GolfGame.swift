@@ -267,7 +267,7 @@ final class GolfGame {
         var probe = sim
         let power = Shot.power(forPull: pull.length)
         probe.launch(pull.normalized * Shot.speed(forPull: pull.length))
-        let maxLength = 150 + 130 * power
+        let maxLength = 105 + 90 * power       // about 195 units at full power
         var events: [SimEvent] = []
         var points = [probe.pos]
         var length = 0.0
