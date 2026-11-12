@@ -25,8 +25,13 @@ struct RootView: View {
                 .transition(.opacity)
             case .game:
                 GameView(game: game) {
-                    game.leave()
                     screen = .home
+                    // Reset the game only once the course has faded out, so the next hole is
+                    // never seen on the way to the menu.
+                    Task {
+                        try? await Task.sleep(for: .milliseconds(350))
+                        if screen == .home { game.leave() }
+                    }
                 }
                 .transition(.opacity)
             }
