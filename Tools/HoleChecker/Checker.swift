@@ -36,6 +36,12 @@ struct Report {
     /// The share of early resting places the ball cannot get away from.
     var trapRate = 0.0
     var sims = 0
+    /// How many different features the winning route has to deal with (see `Checker.route`).
+    var engaged = 0
+    /// True when a robust winning route exists that touches fewer features than the level demands.
+    var bypassable = false
+    /// How much of a wide neighbourhood (±6°, ±12% power) of the winning shot still sinks.
+    var wideWindow = 1.0
     /// The winning shots, in order: where each is played from.
     var solution: [(from: Vec, shot: Attempt)] = []
 }
@@ -131,6 +137,10 @@ final class Checker {
     let field: DistanceField
     let offsets: [Double]
     var sims = 0
+    /// Set for the later levels: how many different features a route must meet, and whether routes
+    /// that squeeze through slivers of dry ground are thrown out.
+    var minEngaged = 0
+    var strict = false
 
     init(_ hole: Hole) {
         self.hole = hole
@@ -191,6 +201,90 @@ final class Checker {
             if ended { points.append(sim.pos); break }
         }
         return points
+    }
+
+    // MARK: What a route has to deal with
+
+    /// Replays a chain of strokes and notes which features the ball meets (windmill blades,
+    /// bumpers, portals, switches, pads, ramps, surfaces, bridges) and whether it ever squeezes
+    /// along a sliver of dry ground between a wall and water or lava (a shot no one could aim).
+    func route(_ chain: [(from: Vec, shot: Attempt)]) -> (engaged: Int, squeezes: Bool) {
+        var kinds = Set<String>()
+        var squeezeSteps = 0
+        var progress = Progress()
+        let hazards = hole.patches.filter {
+            switch $0.kind { case .water, .lava: return true; default: return false }
+        }
+        for (from, shot) in chain {
+            var sim = Simulation(hole: hole)
+            sim.pos = from
+            sim.time = shot.offset
+            sim.doorsOpen = progress.doors
+            sim.broken = progress.broken
+            sim.launch(Vec(cos(shot.angle), sin(shot.angle)) * shot.speed)
+            var events: [SimEvent] = []
+            var steps = 0
+            while sim.isMoving, steps < 2400 {
+                events.removeAll(keepingCapacity: true)
+                let ended = sim.step(events: &events)
+                for e in events {
+                    switch e {
+                    case .windmill: kinds.insert("windmill")
+                    case .bumper: kinds.insert("bumper")
+                    case .portal: kinds.insert("portal")
+                    case .boost: kinds.insert("boost")
+                    case .switchPressed: kinds.insert("switch")
+                    case .broke: kinds.insert("broke")
+                    case .pad: kinds.insert("pad")
+                    case .launch, .land: kinds.insert("jump")
+                    default: break
+                    }
+                }
+                if steps % 4 == 0 {
+                    for patch in hole.patches where patch.contains(sim.pos) {
+                        switch patch.kind {
+                        case .sand: kinds.insert("sand")
+                        case .mud: kinds.insert("mud")
+                        case .ice: kinds.insert("ice")
+                        case .slope: kinds.insert("slope")
+                        case .wind: kinds.insert("wind")
+                        case .boost: kinds.insert("boostpad")
+                        case .bridge: kinds.insert("bridge")
+                        case .ramp: kinds.insert("ramp")
+                        default: break
+                        }
+                    }
+                    if !hazards.isEmpty {
+                        var nearWater = false
+                        for patch in hazards {
+                            for d in [Vec(4, 0), Vec(-4, 0), Vec(0, 4), Vec(0, -4)] where patch.contains(sim.pos + d) { nearWater = true }
+                        }
+                        if nearWater {
+                            for sg in hole.segments where Poly.closestPoint(sg.a, sg.b, to: sim.pos).distance(to: sim.pos) < Simulation.ballRadius + 1.5 {
+                                squeezeSteps += 1
+                                break
+                            }
+                        }
+                    }
+                }
+                steps += 1
+                if ended { break }
+            }
+            progress = Progress(doors: sim.doorsOpen, broken: sim.broken)
+        }
+        return (kinds.count, squeezeSteps > 6)
+    }
+
+    /// How much of a wide neighbourhood of a winning shot still sinks.
+    func wideWindow(from p: Vec, _ shot: Attempt, progress: Progress) -> Double {
+        var hits = 0, total = 0
+        for da in [-6.0, -3.0, 0, 3.0, 6.0] {
+            for f in [0.88, 0.94, 1.0, 1.06, 1.12] {
+                total += 1
+                if case .sank = run(from: p, Attempt(angle: shot.angle + da * .pi / 180, speed: min(Shot.maxSpeed, shot.speed * f), offset: shot.offset), progress: progress).outcome { hits += 1 }
+            }
+        }
+        return Double(hits) / Double(total)
     }
 
     // MARK: Which shots to try
@@ -308,14 +402,29 @@ final class Checker {
                 // Prefer the most forgiving winning shot.
                 var scored = sinks.map { (s: $0, w: window(from: $0.from, $0.shot, progress: $0.progress)) }
                 scored.sort { $0.w > $1.w }
-                for cand in scored.prefix(6) where cand.w >= 0.2 {
-                    if regionCanSink(cand.s.from, progress: cand.s.progress) || cand.s.from == hole.tee {
+                var chosen = false
+                var routes: [Int] = []
+                for cand in scored.prefix(strict ? 14 : 6) where cand.w >= 0.2 {
+                    let full = cand.s.chain + [(cand.s.from, cand.s.shot)]
+                    var engaged = 0
+                    if strict {
+                        let r = route(full)
+                        // A solution that squeezes through a sliver is not a real solution.
+                        if r.squeezes { continue }
+                        engaged = r.engaged
+                        routes.append(engaged)
+                    }
+                    if !chosen, regionCanSink(cand.s.from, progress: cand.s.progress) || cand.s.from == hole.tee {
+                        chosen = true
                         report.optimal = depth
                         report.window = cand.w
-                        report.solution = cand.s.chain + [(cand.s.from, cand.s.shot)]
-                        break
+                        report.engaged = engaged
+                        report.solution = full
+                        if strict { report.wideWindow = wideWindow(from: cand.s.from, cand.s.shot, progress: cand.s.progress) }
+                        if !strict { break }
                     }
                 }
+                if strict, chosen, let least = routes.min(), least < minEngaged { report.bypassable = true }
                 if report.optimal != nil { break }
             }
             if depth == 1 { earlyStates = next.map { ($0.0, $0.3) } }

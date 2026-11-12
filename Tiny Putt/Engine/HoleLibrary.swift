@@ -17,6 +17,12 @@ nonisolated enum HoleLibrary {
     /// Levels 1-10 are hand-made; the rest come from the generator, using the seeds the hole
     /// checker accepted. Past the last level the campaign starts over.
     static func hole(forLevel n: Int) -> Hole {
+        // Play-test holes for the difficulty steps live at far-off level numbers.
+        if let entry = DifficultySamples.entries[n],
+           let made = HoleGenerator.make(level: n, seed: entry.seed, theme: ThemeID(rawValue: entry.theme), par: entry.par,
+                                         template: Template(rawValue: entry.template), middle: Middle(rawValue: entry.middle)) {
+            return made.hole
+        }
         let i = (max(1, n) - 1) % count
         if i < handMade.count { return handMade[i] }
         let entry = CampaignTable.entries[i - handMade.count]

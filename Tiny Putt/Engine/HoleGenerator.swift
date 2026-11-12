@@ -116,14 +116,27 @@ nonisolated enum HoleGenerator {
     /// How hard a level is, from 1 (gentle) to 3. Levels 1-10 are hand-made, so this starts at 11.
     static func tier(forLevel level: Int) -> Int { level <= 25 ? 1 : level <= 38 ? 2 : 3 }
 
+    /// Past the warm-up, difficulty climbs one step every 100 levels: 0 up to level 100, up to 9
+    /// from level 901 on. Each step adds obstacles, narrows the course and (in the checker) asks for
+    /// more strokes and a finer aim.
+    static func step(forLevel level: Int) -> Int { level <= 50 ? 0 : min(9, (level - 1) / 100) }
+
+    /// A new twist joins the mix every 25 levels from level 51, and stays on.
+    enum Twist: Int, CaseIterable {
+        case fourObstacles, moreDishes, windingCourses, twoClocks, fasterGadgets, moreHazards
+    }
+
+    static func has(_ twist: Twist, level: Int) -> Bool { level >= 51 + 25 * twist.rawValue }
+
     /// Builds the hole for a seed. Returns nil when the random layout came out unusable.
     static func make(level: Int, seed: UInt64, theme: ThemeID? = nil, par: Int = 3,
                      template forcedTemplate: Template? = nil, middle forcedMiddle: Middle? = nil) -> Generated? {
         var rng = SeededRandom(seed: seed &* 0x517C_C1B7_2722_0A95 &+ UInt64(level))
         let tier = tier(forLevel: level)
 
-        let template = forcedTemplate ?? pickTemplate(tier: tier, rng: &rng)
-        guard let layout = layout(for: template, rng: &rng) else { return nil }
+        let template = forcedTemplate ?? pickTemplate(tier: tier, level: level, rng: &rng)
+        let step = step(forLevel: level)
+        guard let layout = layout(for: template, squeeze: 1 - 0.02 * Double(step), rng: &rng) else { return nil }
         let spine = layout.spine
         var blocks: [[Vec]] = [], patches: [Patch] = []
         var bumpers: [Bumper] = [], windmills: [Windmill] = [], magnets: [Magnet] = []
@@ -131,13 +144,19 @@ nonisolated enum HoleGenerator {
         var oneWays: [OneWay] = [], bouncePads: [BouncePad] = [], breakables: [Breakable] = []
 
         // Obstacles along the way.
-        let middles = pickMiddles(tier: tier, width: spine.widths.min() ?? 100, first: forcedMiddle, rng: &rng)
+        let middles = pickMiddles(tier: tier, step: step, level: level, width: spine.widths.min() ?? 100, first: forcedMiddle, rng: &rng)
         let first = spine.length * 0.30, last = spine.length * 0.70
         for (k, kind) in middles.enumerated() {
             let t = middles.count == 1 ? 0.5 : Double(k) / Double(middles.count - 1)
             let s = spine.clear(first + (last - first) * t + rng.range(-25, 25))
             var b = Builder(frame: spine.frame(at: s), tier: tier)
             b.place(kind, rng: &rng)
+            if has(.fasterGadgets, level: level) {
+                // Timed gadgets run a little quicker as the game goes on.
+                let pace = 1 + 0.03 * Double(step)
+                for i in b.movers.indices { b.movers[i].speed *= pace }
+                for i in b.windmills.indices { b.windmills[i].speed *= pace }
+            }
             blocks += b.blocks; patches += b.patches
             bumpers += b.bumpers; windmills += b.windmills; magnets += b.magnets
             portals += b.portals; movers += b.movers; switches += b.switches; doors += b.doors
@@ -150,7 +169,7 @@ nonisolated enum HoleGenerator {
         let tee = teeFrame.pos + teeFrame.n * rng.range(-0.12, 0.12) * teeFrame.width
         let cup = cupFrame.pos + cupFrame.n * rng.range(-0.15, 0.15) * cupFrame.width
 
-        let finale = pickFinale(tier: tier, width: cupFrame.width, rng: &rng)
+        let finale = pickFinale(tier: tier, level: level, width: cupFrame.width, rng: &rng)
         var fin = Builder(frame: Frame(pos: cup, dir: cupFrame.dir, width: cupFrame.width), tier: tier)
         fin.finish(finale, rng: &rng)
         blocks += fin.blocks; patches += fin.patches; bumpers += fin.bumpers
@@ -159,7 +178,7 @@ nonisolated enum HoleGenerator {
         // the random stream, so every other choice for a seed stays as it was.
         var bowls: [Bowl] = []
         let mix = seed &* 0x9E37_79B9_7F4A_7C15
-        if mix >> 61 < 3 {
+        if mix >> 61 < (has(.moreDishes, level: level) ? 5 : 3) {
             let radius = min(125, max(85, cupFrame.width * 0.85))
             let hill = (mix >> 30) & 1 == 1
             bowls.append(Bowl(center: cup, radius: radius, strength: hill ? -330 : 340))
@@ -196,22 +215,31 @@ nonisolated enum HoleGenerator {
     // MARK: Choosing
 
     /// The layouts a tier may use (the tight zigzag only appears once the game has warmed up).
-    static func templates(tier: Int) -> [Template] {
+    static func templates(tier: Int, level: Int = 0) -> [Template] {
         var pool: [Template] = [.straight, .waist, .lShape, .sBend, .uTurn, .diagonal, .room, .arena]
         if tier >= 2 { pool.append(.zigzag) }
+        // Winding courses turn up more once that twist is on.
+        if has(.windingCourses, level: level) { pool += [.zigzag, .sBend, .uTurn, .lShape] }
         return pool
     }
 
-    private static func pickTemplate(tier: Int, rng: inout SeededRandom) -> Template {
-        rng.pick(templates(tier: tier))
+    private static func pickTemplate(tier: Int, level: Int, rng: inout SeededRandom) -> Template {
+        rng.pick(templates(tier: tier, level: level))
     }
 
-    private static func pickMiddles(tier: Int, width: Double, first: Middle?, rng: inout SeededRandom) -> [Middle] {
+    private static func pickMiddles(tier: Int, step: Int, level: Int, width: Double, first: Middle?, rng: inout SeededRandom) -> [Middle] {
         let count: Int
         switch tier {
         case 1: count = 1
         case 2: count = rng.chance(0.55) ? 2 : 1
-        default: count = rng.chance(0.4) ? 3 : 2
+        default:
+            if step == 0 {
+                count = rng.chance(0.4) ? 3 : 2
+            } else {
+                // Every step makes a third obstacle likelier, and from step 3 a fourth can appear.
+                count = 2 + (rng.chance(min(0.95, 0.4 + 0.1 * Double(step))) ? 1 : 0)
+                    + (has(.fourObstacles, level: level) && rng.chance(0.15 + 0.06 * Double(step)) ? 1 : 0)
+            }
         }
         var pool = Middle.allCases
         // Narrow courses cannot hold the big gadgets.
@@ -224,7 +252,8 @@ nonisolated enum HoleGenerator {
             // Two floor surfaces next to each other turn into mush.
             if [.sand, .mud, .ice].contains(m) { pool.removeAll { [.sand, .mud, .ice].contains($0) } }
             // One clock per hole.
-            if m.isTimed { pool.removeAll { $0.isTimed } }
+            // (Once the twist is on, a second clock is allowed now and then.)
+            if m.isTimed, !(has(.twoClocks, level: level) && rng.chance(0.5)) { pool.removeAll { $0.isTimed } }
             // Rivers and walls with a trick are each used once.
             if [.bridge, .jump, .pond, .lava].contains(m) { pool.removeAll { [.bridge, .jump].contains($0) } }
             if [.portal, .tunnel].contains(m) { pool.removeAll { [.portal, .tunnel].contains($0) } }
@@ -232,14 +261,16 @@ nonisolated enum HoleGenerator {
             picked.append(m)
         }
         if let first, pool.contains(first) { take(first) }
-        while picked.count < min(count, 3), !pool.isEmpty {
+        let wanted = step >= 6 ? max(count, 3) : count
+        while picked.count < min(wanted, 4), !pool.isEmpty {
             take(rng.pick(pool))
         }
         return picked
     }
 
-    private static func pickFinale(tier: Int, width: Double, rng: inout SeededRandom) -> Finale {
+    private static func pickFinale(tier: Int, level: Int, width: Double, rng: inout SeededRandom) -> Finale {
         var pool: [Finale] = [.plain, .plain, .sandRing, .backstop, .bumperGuard]
+        if has(.moreHazards, level: level), width >= 150 { pool += [.waterFlanks, .lavaFlanks] }
         if width >= 150 { pool += [.waterFlanks]; if tier >= 2 { pool.append(.lavaFlanks) } }
         return rng.pick(pool)
     }
@@ -273,43 +304,47 @@ nonisolated enum HoleGenerator {
         return Poly.rounded(left + right.reversed(), radius: radius)
     }
 
-    private static func layout(for template: Template, rng: inout SeededRandom) -> Layout? {
+    private static func layout(for template: Template, squeeze: Double, rng: inout SeededRandom) -> Layout? {
         let cx = 300.0
+        /// A spine whose widths are narrowed by the difficulty step.
+        func narrowed(_ pts: [Vec], widths: [Double]) -> Spine {
+            Spine(pts, widths: widths.map { $0 * squeeze })
+        }
         switch template {
         case .straight:
             let x = cx + rng.range(-30, 30)
             let w0 = rng.range(120, 190), w1 = rng.range(120, 190)
-            let spine = Spine([Vec(x, 790), Vec(x, 130)], widths: [w0, w1])
+            let spine = narrowed([Vec(x, 790), Vec(x, 130)], widths: [w0, w1])
             return Layout(spine: spine, outline: band(spine, radius: 30))
         case .waist:
             let x = cx + rng.range(-20, 20)
             let wide = rng.range(170, 230), narrow = rng.range(100, 130)
-            let spine = Spine([Vec(x, 790), Vec(x, 540), Vec(x, 380), Vec(x, 130)], widths: [wide, narrow, narrow, wide * rng.range(0.8, 1)])
+            let spine = narrowed([Vec(x, 790), Vec(x, 540), Vec(x, 380), Vec(x, 130)], widths: [wide, narrow, narrow, wide * rng.range(0.8, 1)])
             return Layout(spine: spine, outline: band(spine, radius: 34))
         case .lShape:
             let x0 = rng.range(180, 240), y1 = rng.range(190, 260)
             let w = rng.range(120, 160)
-            let spine = Spine([Vec(x0, 790), Vec(x0, y1), Vec(x0 + rng.range(200, 270), y1)], widths: [w, w, w])
+            let spine = narrowed([Vec(x0, 790), Vec(x0, y1), Vec(x0 + rng.range(200, 270), y1)], widths: [w, w, w])
             return Layout(spine: spine, outline: band(spine, radius: 28))
         case .sBend:
             let xa = rng.range(180, 220), xb = rng.range(380, 420)
             let y1 = rng.range(430, 530)
             let w = rng.range(120, 150)
-            let spine = Spine([Vec(xa, 790), Vec(xa, y1), Vec(xb, y1 - rng.range(0, 40)), Vec(xb, 130)], widths: [w, w, w, w])
+            let spine = narrowed([Vec(xa, 790), Vec(xa, y1), Vec(xb, y1 - rng.range(0, 40)), Vec(xb, 130)], widths: [w, w, w, w])
             return Layout(spine: spine, outline: band(spine, radius: 26))
         case .uTurn:
             let xa = rng.range(160, 190), xb = rng.range(410, 440)
             let w = rng.range(105, 135)
             let top = rng.range(180, 230)
-            let spine = Spine([Vec(xa, 760), Vec(xa, top), Vec(xb, top), Vec(xb, rng.range(560, 680))], widths: [w, w, w, w])
+            let spine = narrowed([Vec(xa, 760), Vec(xa, top), Vec(xb, top), Vec(xb, rng.range(560, 680))], widths: [w, w, w, w])
             return Layout(spine: spine, outline: band(spine, radius: 24))
         case .diagonal:
             let w = rng.range(125, 165)
-            let spine = Spine([Vec(150, 770), Vec(450, 150)], widths: [w, w])
+            let spine = narrowed([Vec(150, 770), Vec(450, 150)], widths: [w, w])
             return Layout(spine: spine, outline: band(spine, radius: 30))
         case .zigzag:
             let w = rng.range(105, 125)
-            let spine = Spine([Vec(170, 780), Vec(430, 560), Vec(170, 340), Vec(430, 130)], widths: [w, w, w, w])
+            let spine = narrowed([Vec(170, 780), Vec(430, 560), Vec(170, 340), Vec(430, 130)], widths: [w, w, w, w])
             return Layout(spine: spine, outline: band(spine, radius: 22))
         case .room:
             let w = rng.range(300, 400), h = rng.range(500, 620)

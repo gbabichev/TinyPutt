@@ -9,7 +9,7 @@
 //  Build and run (from the repository root):
 //    swiftc -swift-version 5 -O -o /tmp/holechecker Tools/HoleChecker/*.swift \
 //      "Tiny Putt/Engine/Geometry.swift" "Tiny Putt/Engine/Hole.swift" "Tiny Putt/Engine/Simulation.swift" \
-//      "Tiny Putt/Engine/HoleGenerator.swift" "Tiny Putt/Engine/HoleLibrary.swift" "Tiny Putt/Engine/CampaignTable.swift"
+//      "Tiny Putt/Engine/HoleGenerator.swift" "Tiny Putt/Engine/HoleLibrary.swift" "Tiny Putt/Engine/CampaignTable.swift" "Tiny Putt/Engine/DifficultySamples.swift"
 //    /tmp/holechecker --from 11 --to 50 --out "Tiny Putt/Engine/CampaignTable.swift"
 //
 
@@ -21,6 +21,8 @@ struct Options {
     var attempts = 400
     var sheet: String?
     var solve: Int?
+    var levels: [Int]?
+    var samples: String?
 }
 
 func parse() -> Options {
@@ -33,6 +35,8 @@ func parse() -> Options {
         case "--out": o.out = it.next()
         case "--sheet": o.sheet = it.next()
         case "--solve": o.solve = Int(it.next() ?? "")
+        case "--levels": o.levels = (it.next() ?? "").split(separator: ",").compactMap { Int($0) }
+        case "--samples": o.samples = it.next()
         case "--attempts": o.attempts = Int(it.next() ?? "") ?? o.attempts
         default: break
         }
@@ -169,6 +173,20 @@ func placed(_ m: Middle, in h: Hole) -> Bool {
     }
 }
 
+/// How many different features the winning route of a level has to meet, so a hole cannot be beaten
+/// by simply going around its obstacles.
+func requiredEngagement(level: Int) -> Int {
+    let step = HoleGenerator.step(forLevel: level)
+    return level <= 50 ? 0 : step >= 7 ? 3 : step >= 3 ? 2 : 1
+}
+
+/// How much of the wide neighbourhood of the best shot may still sink: at the later steps the
+/// winning shot has to be fairly exact.
+func maxWideWindow(level: Int) -> Double {
+    let step = HoleGenerator.step(forLevel: level)
+    return step >= 5 ? 0.95 - 0.05 * Double(step - 5) : 1.0
+}
+
 /// How many strokes a level should take at the very least, so the game gets harder as it goes.
 func minimumStrokes(level: Int) -> Int {
     switch HoleGenerator.tier(forLevel: level) {
@@ -180,30 +198,34 @@ func minimumStrokes(level: Int) -> Int {
 
 func acceptable(_ r: Report, level: Int, relaxed: Bool, hazardCap: Double = 0.55) -> Bool {
     guard let optimal = r.optimal else { return false }
-    let maxOptimal = level <= 25 ? 3 : level <= 38 ? 4 : 5
-    let minOptimal = relaxed ? max(2, minimumStrokes(level: level) - 1) : minimumStrokes(level: level)
+    let step = HoleGenerator.step(forLevel: level)
+    let maxOptimal = (level <= 25 ? 3 : level <= 38 ? 4 : 5) + step / 2
+    // Past the warm-up the stroke count is never relaxed, or the difficulty steps would not hold.
+    let minOptimal = relaxed && step == 0 ? max(2, minimumStrokes(level: level) - 1) : minimumStrokes(level: level)
     return optimal >= minOptimal && optimal <= maxOptimal
-        && r.window >= (relaxed ? 0.15 : 0.22)
+        && r.window >= (relaxed ? 0.15 - 0.01 * Double(step) : 0.22 - 0.015 * Double(step))
         && r.hazardRate <= hazardCap
         && r.trapRate <= 0.2
+        && !r.bypassable
+        && r.wideWindow <= maxWideWindow(level: level)
 }
 
 /// Shapes and lead obstacles are dealt out in turn, so every kind turns up about equally often.
 func scheduled(level: Int) -> (Template, Middle) {
     let i = level - options.from
-    let shapes = HoleGenerator.templates(tier: HoleGenerator.tier(forLevel: level))
+    let shapes = HoleGenerator.templates(tier: HoleGenerator.tier(forLevel: level), level: level)
     return (shapes[(i * 5) % shapes.count], Middle.allCases[(i * 7 + i / 26) % Middle.allCases.count])
 }
 
 let started = Date()
-for level in options.from...options.to {
+for level in options.levels ?? Array(options.from...options.to) {
     let (wantedTemplate, wantedMiddle) = scheduled(level: level)
     var attempt = 0
     var found: Accepted?
     var triedSimilar = 0, triedInvalid = 0, triedRejected = 0
     while found == nil, attempt < options.attempts {
         let relaxed = attempt >= options.attempts / 2
-        let dropLead = attempt >= options.attempts * 3 / 4
+        let dropLead = attempt >= (HoleGenerator.step(forLevel: level) > 0 ? options.attempts / 3 : options.attempts * 3 / 4)
         let batch = 8
         var evals = [Evaluation?](repeating: nil, count: batch)
         let base = UInt64(level) * 100_000 + UInt64(attempt)
@@ -225,7 +247,12 @@ for level in options.from...options.to {
                     if s.shape >= 0.88, s.features >= 0.45 { similar = true; break }
                 }
                 if similar { out[i] = Evaluation(seed: seed, forcedMiddle: forced, gen: gen, fingerprint: fp, report: nil); return }
-                out[i] = Evaluation(seed: seed, forcedMiddle: forced, gen: gen, fingerprint: fp, report: Checker(gen.hole).analyze())
+                let checker = Checker(gen.hole)
+                if HoleGenerator.step(forLevel: level) > 0 || level > 50 {
+                    checker.strict = true
+                    checker.minEngaged = requiredEngagement(level: level)
+                }
+                out[i] = Evaluation(seed: seed, forcedMiddle: forced, gen: gen, fingerprint: fp, report: checker.analyze())
             }
         }
         attempt += batch
@@ -248,12 +275,12 @@ for level in options.from...options.to {
         templateUse[f.gen.template, default: 0] += 1
         for m in f.gen.middles { middleUse[m, default: 0] += 1 }
         let mids = f.gen.middles.map { "\($0)" }.joined(separator: "+")
-        print(String(format: "level %2d  %-9@ %-24@ finish %-12@ optimal %d  window %.2f  hazards %.2f  seed %llu  (tried %d)",
+        print(String(format: "level %2d  %-9@ %-24@ finish %-12@ optimal %d  window %.2f  wide %.2f  engaged %d  hazards %.2f  seed %llu  (tried %d)",
                      level, "\(f.gen.template)" as NSString, mids as NSString, "\(f.gen.finale)" as NSString,
-                     f.report.optimal ?? 0, f.report.window, f.report.hazardRate, f.seed, attempt))
+                     f.report.optimal ?? 0, f.report.window, f.report.wideWindow, f.report.engaged, f.report.hazardRate, f.seed, attempt))
     } else {
         print("level \(level): NO HOLE FOUND after \(attempt) seeds (invalid \(triedInvalid), similar \(triedSimilar), rejected \(triedRejected))")
-        exit(1)
+        if options.levels == nil { exit(1) }
     }
 }
 print(String(format: "Done in %.0fs.", Date().timeIntervalSince(started)))
@@ -262,6 +289,29 @@ if let sheet = options.sheet {
     let holes = accepted.compactMap { a in HoleGenerator.make(level: a.level, seed: a.seed, theme: a.theme, par: a.par, template: a.gen.template, middle: a.forcedMiddle)?.hole }
     writeSheet(holes, to: sheet)
     print("Wrote contact sheet of \(holes.count) holes to \(sheet)")
+}
+
+if let path = options.samples {
+    var text = """
+    //
+    //  DifficultySamples.swift
+    //  Tiny Putt
+    //
+    //  Written by the hole checker (--levels ... --samples). One proven hole per difficulty step, kept
+    //  at far-off level numbers so they can be play-tested with the debug menu's "Go to hole".
+    //  Do not edit by hand.
+    //
+
+    nonisolated enum DifficultySamples {
+        static let entries: [Int: CampaignTable.Entry] = [
+
+    """
+    for a in accepted {
+        text += "        \(a.level): CampaignTable.Entry(seed: \(a.seed), theme: \(a.theme.rawValue), par: \(a.par), template: \(a.gen.template.rawValue), middle: \(a.forcedMiddle?.rawValue ?? -1)),\n"
+    }
+    text += "    ]\n}\n"
+    try! text.write(toFile: path, atomically: true, encoding: .utf8)
+    print("Wrote \(accepted.count) samples to \(path)")
 }
 
 if let path = options.out {
