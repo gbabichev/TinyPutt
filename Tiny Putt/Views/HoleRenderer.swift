@@ -412,7 +412,7 @@ enum HoleRenderer {
         let tint = Color(hue: 0.005 + 0.15 * (1 - power), saturation: 0.88, brightness: 1.0)
 
         // The power ring around the ball.
-        let ringR: CGFloat = 17
+        let ringR: CGFloat = 13
         w.stroke(w.circle(ball, ringR), with: .color(.black.opacity(0.28)), lineWidth: 6)
         w.stroke(w.circle(ball, ringR), with: .color(.white.opacity(0.4)), lineWidth: 4)
         if power > 0.01 {
@@ -428,7 +428,7 @@ enum HoleRenderer {
 
         // The route of the shot as a trail of dots in the same colour, fading away along its length.
         if let preview = game.estimate, preview.points.count > 1 {
-            let skip = Double(ringR) + 9              // start just outside the power ring
+            let skip = Double(ringR) + 5              // start just outside the power ring
             let spacing = 9.0
             var carried = 0.0
             var travelled = 0.0

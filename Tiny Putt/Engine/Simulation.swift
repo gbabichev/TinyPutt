@@ -14,7 +14,7 @@ nonisolated enum Shot {
     /// the same on every screen size.
     static let maxPull: Double = 170
     static let minPull: Double = 14
-    static let minSpeed: Double = 70
+    static let minSpeed: Double = 150
     static let maxSpeed: Double = 950
 
     /// 0...1

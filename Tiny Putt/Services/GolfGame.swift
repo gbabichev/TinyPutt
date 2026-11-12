@@ -256,8 +256,8 @@ final class GolfGame {
         haptics.hit(power: power)
     }
 
-    /// The route of the shot, but only its first stretch: a short guide that fades out, never
-    /// the whole trip. Nudged slightly so it is a hint rather than a promise.
+    /// The route the ball will really take (the same physics as the shot), but only its first
+    /// stretch: a short guide that fades out, never the whole trip.
     private func makeEstimate(for pull: Vec) -> ShotPreview {
         var probe = sim
         let power = Shot.power(forPull: pull.length)
@@ -277,29 +277,7 @@ final class GolfGame {
             }
             if ended { points.append(probe.pos); break }
         }
-        // A soft tap rolls the ball less than the width of the power ring, so the route would hide
-        // under it. The guide always reaches a little way out, carrying straight on where the
-        // ball would stop (and never past the edge of the course).
-        let minLength = 58.0
-        if length < minLength {
-            let heading = points.count > 1 ? (points[points.count - 1] - points[points.count - 2]).normalized : pull.normalized
-            var tip = points[points.count - 1]
-            var extra = length
-            while extra < minLength {
-                let next = tip + heading * 5
-                guard Poly.contains(hole.outline, next) else { break }
-                points.append(next)
-                tip = next
-                extra += 5
-            }
-            length = extra
-        }
-        // The nudge depends only on the slowly changing aim angle, so the route glides as you
-        // drag instead of shimmering.
-        let angle = atan2(pull.y, pull.x)
-        let nudge = Vec(sin(angle * 2 + 1), cos(angle * 1.3)) * (length * 0.03)
-        let n = Double(max(1, points.count - 1))
-        for i in points.indices { points[i] += nudge * (Double(i) / n) }
+        if let last = points.last, probe.pos.distance(to: last) > 0.5 { points.append(probe.pos) }
         return ShotPreview(points: points)
     }
 
