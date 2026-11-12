@@ -114,6 +114,11 @@ nonisolated struct Simulation: Sendable {
             let dist = d.length
             if dist < m.radius, dist > 1 { accel += d / dist * (m.strength * (1 - dist / m.radius)) }
         }
+        for b in hole.bowls {
+            let d = b.center - pos
+            let dist = d.length
+            if dist < b.radius, dist > 1 { accel += d / dist * (b.strength * dist / b.radius) }
+        }
         // A shot that goes on too long is slowed so it always ends.
         if shotTime > 14 { friction *= 6 }
 

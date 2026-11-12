@@ -145,12 +145,19 @@ nonisolated enum HoleGenerator {
         fin.finish(finale, rng: &rng)
         blocks += fin.blocks; patches += fin.patches; bumpers += fin.bumpers
 
+        // About one hole in three has the cup in a dish. Decided from the seed, not the random
+        // stream, so every other choice for a seed stays as it was.
+        var bowls: [Bowl] = []
+        if (seed &* 0x9E37_79B9_7F4A_7C15) >> 61 < 3 {
+            bowls.append(Bowl(center: cup, radius: min(125, max(85, cupFrame.width * 0.85))))
+        }
+
         var hole = Hole(
             name: "Hole \(level)",
             theme: theme ?? .meadow,
             size: Vec(600, 900),
             outline: layout.outline,
-            blocks: blocks, patches: patches, bumpers: bumpers, windmills: windmills, magnets: magnets,
+            blocks: blocks, patches: patches, bumpers: bumpers, windmills: windmills, magnets: magnets, bowls: bowls,
             tee: tee, cup: cup, par: par
         )
         hole = randomlyTurned(hole, rng: &rng)
@@ -532,10 +539,12 @@ nonisolated extension Hole {
         for i in mg.indices { mg[i].center = point(mg[i].center) }
         var bm = bumpers
         for i in bm.indices { bm[i].center = point(bm[i].center) }
+        var bw = bowls
+        for i in bw.indices { bw[i].center = point(bw[i].center) }
         return Hole(
             name: name, theme: theme, size: size,
             outline: outline.map(point), blocks: blocks.map { $0.map(point) },
-            patches: newPatches, bumpers: bm, windmills: wm, magnets: mg,
+            patches: newPatches, bumpers: bm, windmills: wm, magnets: mg, bowls: bw,
             tee: point(tee), cup: point(cup), par: par
         )
     }

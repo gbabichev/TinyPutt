@@ -74,6 +74,15 @@ nonisolated struct Magnet: Sendable {
     var strength: Double = 700
 }
 
+/// A dish in the ground: the ball rolls down toward the middle, so a shot passing by bends.
+/// The pull grows toward the rim and fades to nothing at the centre.
+nonisolated struct Bowl: Sendable {
+    var center: Vec
+    var radius: Double = 115
+    /// Pull at the rim, in units per second squared (grass friction is 300).
+    var strength: Double = 280
+}
+
 nonisolated struct Segment: Sendable {
     var a: Vec
     var b: Vec
@@ -92,6 +101,7 @@ nonisolated struct Hole: Sendable {
     var bumpers: [Bumper]
     var windmills: [Windmill]
     var magnets: [Magnet]
+    var bowls: [Bowl]
     var tee: Vec
     var cup: Vec
     var par: Int
@@ -115,6 +125,7 @@ nonisolated struct Hole: Sendable {
         bumpers: [Bumper] = [],
         windmills: [Windmill] = [],
         magnets: [Magnet] = [],
+        bowls: [Bowl] = [],
         tee: Vec,
         cup: Vec,
         par: Int
@@ -128,6 +139,7 @@ nonisolated struct Hole: Sendable {
         self.bumpers = bumpers
         self.windmills = windmills
         self.magnets = magnets
+        self.bowls = bowls
         self.tee = tee
         self.cup = cup
         self.par = par

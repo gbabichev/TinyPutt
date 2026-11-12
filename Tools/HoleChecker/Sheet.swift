@@ -70,6 +70,11 @@ func writeSheet(_ holes: [Hole], to path: String, columns: Int = 8, cell: Int = 
             let c = t(b.center), r = CGFloat(b.radius) * scale
             ctx.setFillColor(color(0xE5484D)); ctx.fillEllipse(in: CGRect(x: c.x - r, y: c.y - r, width: 2 * r, height: 2 * r))
         }
+        for b in h.bowls {
+            let c = t(b.center), r = CGFloat(b.radius) * scale
+            ctx.setStrokeColor(color(0xFFFFFF)); ctx.setLineWidth(1.2)
+            ctx.strokeEllipse(in: CGRect(x: c.x - r, y: c.y - r, width: 2 * r, height: 2 * r))
+        }
         for m in h.magnets {
             let c = t(m.center), r = CGFloat(m.radius) * scale * 0.5
             ctx.setStrokeColor(color(m.strength > 0 ? 0xA855F7 : 0xF97316)); ctx.setLineWidth(1.5)

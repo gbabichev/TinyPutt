@@ -40,6 +40,7 @@ enum HoleRenderer {
         var onCourse = w
         onCourse.clip(to: path(hole.outline))
         for patch in hole.patches { drawPatch(&onCourse, patch, pal: pal, time: time) }
+        for bowl in hole.bowls { drawBowl(&onCourse, bowl) }
         drawTee(&w, hole: hole)
         drawCup(&w, hole: hole)
         // Walls inside the course end flush with its edge.
@@ -299,6 +300,25 @@ enum HoleRenderer {
 
     // MARK: - Gadgets
 
+    /// A dish in the ground: paler in the middle, darker toward the rim, with contour rings.
+    private static func drawBowl(_ w: inout GraphicsContext, _ b: Bowl) {
+        let c = b.center.cg
+        let r = CGFloat(b.radius)
+        let disc = w.circle(c, r)
+        w.fill(disc, with: .radialGradient(
+            Gradient(stops: [
+                .init(color: .white.opacity(0.30), location: 0),
+                .init(color: .white.opacity(0.10), location: 0.55),
+                .init(color: .black.opacity(0.14), location: 1),
+            ]),
+            center: c, startRadius: 0, endRadius: r))
+        w.stroke(disc, with: .color(.black.opacity(0.10)), lineWidth: 2)
+        for f in [0.32, 0.58, 0.84] {
+            w.stroke(w.circle(c, r * f), with: .color(.white.opacity(0.42)),
+                     style: StrokeStyle(lineWidth: 1.5, dash: [6, 5]))
+        }
+    }
+
     private static func drawBlock(_ w: inout GraphicsContext, _ block: [Vec], pal: Palette) {
         let p = path(block)
         w.fill(p.offsetBy(dx: 0, dy: 4), with: .color(.black.opacity(0.22)))
@@ -388,7 +408,6 @@ enum HoleRenderer {
     private static func drawAim(_ w: inout GraphicsContext, game: GolfGame, pull: Vec) {
         let ball = game.sim.pos.cg
         let power = Shot.power(forPull: pull.length)
-        let dir = pull.normalized
         // Yellow when soft, shading to orange-red as the shot gets harder.
         let tint = Color(hue: 0.005 + 0.15 * (1 - power), saturation: 0.88, brightness: 1.0)
 
@@ -407,28 +426,10 @@ enum HoleRenderer {
             w.stroke(arc, with: .color(tint), style: StrokeStyle(lineWidth: 4, lineCap: .round, lineJoin: .round))
         }
 
-        // The arrow, pointing the way the ball will go.
-        let start = game.sim.pos + dir * 26
-        let end = start + dir * (18 + 70 * power)
-        var shaft = Path()
-        shaft.move(to: start.cg)
-        shaft.addLine(to: end.cg)
-        let head = Path { p in
-            p.move(to: (end + dir * 12).cg)
-            p.addLine(to: (end + dir.perp * 8).cg)
-            p.addLine(to: (end - dir.perp * 8).cg)
-            p.closeSubpath()
-        }
-        w.stroke(shaft, with: .color(.black.opacity(0.3)), style: StrokeStyle(lineWidth: 7, lineCap: .round))
-        w.fill(head, with: .color(.black.opacity(0.3)))
-        w.stroke(head, with: .color(.black.opacity(0.3)), style: StrokeStyle(lineWidth: 4, lineJoin: .round))
-        w.stroke(shaft, with: .color(tint), style: StrokeStyle(lineWidth: 3.5, lineCap: .round))
-        w.fill(head, with: .color(tint))
-
-        // A fine dotted route in the same colour, fading away along its length.
+        // The route of the shot as a trail of dots in the same colour, fading away along its length.
         if let preview = game.estimate, preview.points.count > 1 {
-            let skip = 26 + 18 + 70 * power + 14      // keep clear of the arrow
-            let spacing = 7.0
+            let skip = Double(ringR) + 9              // start just outside the power ring
+            let spacing = 9.0
             var carried = 0.0
             var travelled = 0.0
             var total = 0.0
@@ -442,7 +443,7 @@ enum HoleRenderer {
                     let p = a + (b - a) * (d / seg)
                     if p.distance(to: game.sim.pos) > skip {
                         let t = min(1, (travelled + d) / max(total, 1))
-                        w.fill(w.circle(p.cg, CGFloat(1.7 - 0.5 * t)), with: .color(tint.opacity(0.95 - 0.8 * t)))
+                        w.fill(w.circle(p.cg, CGFloat(2.4 - 1.0 * t)), with: .color(tint.opacity(1 - 0.8 * t)))
                     }
                     d += spacing
                 }
