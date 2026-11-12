@@ -97,6 +97,13 @@ nonisolated struct Hole: Sendable {
     var par: Int
     /// Every wall as line segments, built once.
     let segments: [Segment]
+    // A grid over the walls, so the physics only tests the few segments near the ball.
+    let gridOrigin: Vec
+    let gridCols: Int
+    let gridRows: Int
+    let cellStart: [Int32]
+    let cellSegments: [Int32]
+    static let cellSize = 32.0
 
     init(
         name: String,
@@ -129,5 +136,38 @@ nonisolated struct Hole: Sendable {
             for i in 0..<loop.count { segs.append(Segment(a: loop[i], b: loop[(i + 1) % loop.count])) }
         }
         segments = segs
+
+        // Build the wall grid (each segment is listed in every cell it could touch).
+        var lo = Vec(.infinity, .infinity), hi = Vec(-.infinity, -.infinity)
+        for sg in segs {
+            lo.x = min(lo.x, sg.a.x, sg.b.x); lo.y = min(lo.y, sg.a.y, sg.b.y)
+            hi.x = max(hi.x, sg.a.x, sg.b.x); hi.y = max(hi.y, sg.a.y, sg.b.y)
+        }
+        let origin = Vec(lo.x - 40, lo.y - 40)
+        let cols = Int((hi.x - lo.x + 80) / Self.cellSize) + 1
+        let rows = Int((hi.y - lo.y + 80) / Self.cellSize) + 1
+        var buckets = [[Int32]](repeating: [], count: cols * rows)
+        let reach = 12.0   // ball radius plus a step of travel
+        for (i, sg) in segs.enumerated() {
+            let x0 = Int((min(sg.a.x, sg.b.x) - reach - origin.x) / Self.cellSize)
+            let x1 = Int((max(sg.a.x, sg.b.x) + reach - origin.x) / Self.cellSize)
+            let y0 = Int((min(sg.a.y, sg.b.y) - reach - origin.y) / Self.cellSize)
+            let y1 = Int((max(sg.a.y, sg.b.y) + reach - origin.y) / Self.cellSize)
+            for cy in max(0, y0)...min(rows - 1, y1) {
+                for cx in max(0, x0)...min(cols - 1, x1) { buckets[cy * cols + cx].append(Int32(i)) }
+            }
+        }
+        var starts = [Int32](repeating: 0, count: cols * rows + 1)
+        var flat: [Int32] = []
+        for (i, b) in buckets.enumerated() {
+            starts[i] = Int32(flat.count)
+            flat.append(contentsOf: b)
+        }
+        starts[cols * rows] = Int32(flat.count)
+        gridOrigin = origin
+        gridCols = cols
+        gridRows = rows
+        cellStart = starts
+        cellSegments = flat
     }
 }

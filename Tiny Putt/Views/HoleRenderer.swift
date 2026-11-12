@@ -42,7 +42,8 @@ enum HoleRenderer {
         for patch in hole.patches { drawPatch(&onCourse, patch, pal: pal, time: time) }
         drawTee(&w, hole: hole)
         drawCup(&w, hole: hole)
-        for block in hole.blocks { drawBlock(&w, block, pal: pal) }
+        // Walls inside the course end flush with its edge.
+        for block in hole.blocks { drawBlock(&onCourse, block, pal: pal) }
         for m in hole.magnets { drawMagnet(&w, m, pal: pal, time: time) }
         for (i, b) in hole.bumpers.enumerated() {
             drawBumper(&w, b, pal: pal, pulse: i < game.bumperPulse.count ? game.bumperPulse[i] : 0)

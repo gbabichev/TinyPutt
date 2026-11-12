@@ -9,11 +9,24 @@
 import Foundation
 
 nonisolated enum HoleLibrary {
+    /// How many hand-made holes open the game.
+    static var handMadeCount: Int { handMade.count }
+    /// How many levels there are before the campaign starts over.
+    static var count: Int { handMade.count + CampaignTable.entries.count }
+
+    /// Levels 1-10 are hand-made; the rest come from the generator, using the seeds the hole
+    /// checker accepted. Past the last level the campaign starts over.
     static func hole(forLevel n: Int) -> Hole {
-        all[(max(1, n) - 1) % all.count]
+        let i = (max(1, n) - 1) % count
+        if i < handMade.count { return handMade[i] }
+        let entry = CampaignTable.entries[i - handMade.count]
+        let made = HoleGenerator.make(level: i + 1, seed: entry.seed, theme: ThemeID(rawValue: entry.theme), par: entry.par,
+                                      template: Template(rawValue: entry.template), middle: Middle(rawValue: entry.middle))
+        // The checker only admits seeds that generate, but never crash the game over a bad one.
+        return made?.hole ?? handMade[i % handMade.count]
     }
 
-    static let all: [Hole] = [
+    static let handMade: [Hole] = [
         straightaway(), dogleg(), sandTrap(), iceRink(), pinball(),
         windmill(), lavaLake(), magnet(), windy(), hills(),
     ]

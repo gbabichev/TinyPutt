@@ -57,6 +57,7 @@ nonisolated struct Simulation: Sendable {
     var time = 0.0
     var shotTime = 0.0
     private var accumulator = 0.0
+    private var stepCount = 0
 
     var isMoving: Bool { vel != .zero }
 
@@ -121,18 +122,27 @@ nonisolated struct Simulation: Sendable {
         }
         pos += vel * dt
 
-        // Walls.
-        for s in hole.segments {
-            let c = Poly.closestPoint(s.a, s.b, to: pos)
-            let d = pos - c
-            let dist = d.length
-            if dist < r {
-                let n = dist > 1e-9 ? d / dist : (s.b - s.a).normalized.perp
-                pos += n * (r - dist)
-                let vn = vel.dot(n)
-                if vn < 0 {
-                    vel -= n * (vn * 1.75)
-                    events.append(.wall(speed: -vn))
+        // Walls: only the segments listed for the cell the ball is in.
+        let cx = Int((pos.x - hole.gridOrigin.x) / Hole.cellSize)
+        let cy = Int((pos.y - hole.gridOrigin.y) / Hole.cellSize)
+        if cx >= 0, cx < hole.gridCols, cy >= 0, cy < hole.gridRows {
+            let cell = cy * hole.gridCols + cx
+            var k = Int(hole.cellStart[cell])
+            let end = Int(hole.cellStart[cell + 1])
+            while k < end {
+                let s = hole.segments[Int(hole.cellSegments[k])]
+                k += 1
+                let c = Poly.closestPoint(s.a, s.b, to: pos)
+                let d = pos - c
+                let dist = d.length
+                if dist < r {
+                    let n = dist > 1e-9 ? d / dist : (s.b - s.a).normalized.perp
+                    pos += n * (r - dist)
+                    let vn = vel.dot(n)
+                    if vn < 0 {
+                        vel -= n * (vn * 1.75)
+                        events.append(.wall(speed: -vn))
+                    }
                 }
             }
         }
@@ -196,8 +206,9 @@ nonisolated struct Simulation: Sendable {
             return true
         }
 
-        // Safety net: never lose the ball outside the course.
-        if !Poly.contains(hole.outline, pos) {
+        // Safety net: never lose the ball outside the course (checked every few steps).
+        stepCount &+= 1
+        if stepCount % 6 == 0, !Poly.contains(hole.outline, pos) {
             events.append(.hazard(.outOfBounds))
             return true
         }
