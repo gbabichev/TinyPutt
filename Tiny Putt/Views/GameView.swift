@@ -191,6 +191,26 @@ private struct NextHoleButton: View {
     }
 }
 
+/// "Pink ball unlocked!" for each colour just earned.
+private struct NewBallBanner: View {
+    let balls: [NewBall]
+
+    var body: some View {
+        ForEach(balls) { ball in
+            HStack(spacing: 8) {
+                BallDot(color: ball.color, size: 22)
+                Text("\(ball.player) unlocked the \(ball.color.displayName) ball!")
+                    .font(.system(size: 15, weight: .heavy, design: .rounded))
+                    .foregroundStyle(Ink.dark)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(Capsule().fill(Color(hex: 0xFFE9A6)))
+            .overlay(Capsule().stroke(.black.opacity(0.12), lineWidth: 1.5))
+        }
+    }
+}
+
 /// What shows after a hole is finished.
 struct ResultCard: View {
     let game: GolfGame
@@ -206,6 +226,7 @@ struct ResultCard: View {
                 Text("\(game.strokes) \(game.strokes == 1 ? "stroke" : "strokes") · par \(game.hole.par)")
                     .font(.system(size: 16, weight: .semibold, design: .rounded))
                     .foregroundStyle(Ink.dark.opacity(0.7))
+                NewBallBanner(balls: game.newBalls)
                 NextHoleButton(game: game)
                 Button("Play again") { game.replayHole() }.buttonStyle(PillButtonStyle())
                 Button("Menu", action: onExit).buttonStyle(PillButtonStyle())
@@ -215,6 +236,7 @@ struct ResultCard: View {
                     Text("\(game.playerName) · \(game.strokes) \(game.strokes == 1 ? "stroke" : "strokes")")
                         .font(.system(size: 24, weight: .heavy, design: .rounded))
                         .foregroundStyle(Ink.dark)
+                    NewBallBanner(balls: game.newBalls)
                     let upNext = game.roster.player(v.order[v.turn + 1])
                     Button("\(upNext?.name ?? "Next") is up") { game.next() }
                         .buttonStyle(PillButtonStyle(prominent: true))
@@ -225,6 +247,7 @@ struct ResultCard: View {
                     Text("Hole \(game.level)")
                         .font(.system(size: 24, weight: .heavy, design: .rounded))
                         .foregroundStyle(Ink.dark)
+                    NewBallBanner(balls: game.newBalls)
                     let best = v.order.compactMap { v.holeStrokes[$0] }.min()
                     HStack(spacing: 0) {
                         Spacer()

@@ -27,6 +27,8 @@ private struct PlayerRow: View {
     let game: GolfGame
     let player: Player
     @State private var name: String
+    /// A locked colour that was tapped, to show what it takes to earn it.
+    @State private var lockedHint: BallColor?
 
     init(game: GolfGame, player: Player) {
         self.game = game
@@ -60,14 +62,40 @@ private struct PlayerRow: View {
                         .foregroundStyle(Ink.dark.opacity(0.55))
                 }
             }
-            HStack(spacing: 8) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 34), spacing: 8)], alignment: .leading, spacing: 10) {
                 ForEach(BallColor.allCases, id: \.self) { color in
-                    Button { game.roster.setBall(player.id, to: color) } label: {
+                    let owned = player.owns(color)
+                    Button {
+                        if owned {
+                            game.roster.setBall(player.id, to: color)
+                            lockedHint = nil
+                        } else {
+                            lockedHint = color
+                        }
+                    } label: {
                         BallDot(color: color, size: 24)
+                            .opacity(owned ? 1 : 0.3)
+                            .overlay {
+                                if !owned {
+                                    Image(systemName: "lock.fill")
+                                        .font(.system(size: 10, weight: .bold))
+                                        .foregroundStyle(Ink.dark.opacity(0.75))
+                                }
+                            }
                             .overlay(Circle().stroke(Ink.dark, lineWidth: player.ball == color ? 3 : 0).padding(-4))
+                            .frame(width: 34, height: 34)
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel(owned ? "\(color.displayName) ball" : "\(color.displayName) ball, locked")
                 }
+            }
+            if let color = lockedHint, let goal = color.unlock {
+                HStack(spacing: 8) {
+                    Image(systemName: "lock.fill")
+                    Text("\(color.displayName): \(goal.requirement) (\(min(player.stats.value(of: goal.stat), goal.target)) of \(goal.target))")
+                }
+                .font(.system(size: 13, weight: .bold, design: .rounded))
+                .foregroundStyle(Ink.dark.opacity(0.7))
             }
         }
         .padding(14)

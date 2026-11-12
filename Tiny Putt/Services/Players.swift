@@ -8,7 +8,7 @@ import Observation
 import SwiftUI
 
 enum BallColor: String, CaseIterable, Codable, Sendable {
-    case white, red, blue, yellow, pink, orange, purple, teal
+    case white, red, blue, yellow, pink, orange, purple, teal, lime, cyan, black, gold
 
     var color: Color {
         switch self {
@@ -20,11 +20,16 @@ enum BallColor: String, CaseIterable, Codable, Sendable {
         case .orange: Color(hex: 0xF5822A)
         case .purple: Color(hex: 0x8B5CF6)
         case .teal: Color(hex: 0x14B8A6)
+        case .lime: Color(hex: 0x84CC16)
+        case .cyan: Color(hex: 0x22D3EE)
+        case .black: Color(hex: 0x2B2B33)
+        case .gold: Color(hex: 0xE0A526)
         }
     }
 }
 
-/// One person who plays. Each player has their own place in the levels and their own best scores.
+/// One person who plays. Each player has their own place in the levels, their own best scores
+/// and their own unlocked ball colours.
 struct Player: Codable, Identifiable, Hashable, Sendable {
     var id: UUID
     var name: String
@@ -33,6 +38,32 @@ struct Player: Codable, Identifiable, Hashable, Sendable {
     var level = 1
     /// The fewest strokes taken on each level.
     var best: [Int: Int] = [:]
+    var stats = PlayerStats()
+    /// The ball colours this player can use.
+    var owned: [BallColor] = BallColor.free
+
+    init(id: UUID, name: String, ball: BallColor) {
+        self.id = id
+        self.name = name
+        self.ball = ball
+        owned = BallColor.free.contains(ball) ? BallColor.free : BallColor.free + [ball]
+    }
+
+    // Older saves have no stats or colours: they start from zero, and keep the colour they chose.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        ball = try c.decode(BallColor.self, forKey: .ball)
+        level = try c.decodeIfPresent(Int.self, forKey: .level) ?? 1
+        best = try c.decodeIfPresent([Int: Int].self, forKey: .best) ?? [:]
+        stats = try c.decodeIfPresent(PlayerStats.self, forKey: .stats) ?? PlayerStats()
+        var colours = try c.decodeIfPresent([BallColor].self, forKey: .owned) ?? BallColor.free
+        if !colours.contains(ball) { colours.append(ball) }
+        owned = colours
+    }
+
+    func owns(_ color: BallColor) -> Bool { owned.contains(color) }
 }
 
 @MainActor
@@ -72,7 +103,7 @@ final class PlayerRoster {
     @discardableResult
     func add() -> Player {
         let used = Set(players.map(\.ball))
-        let ball = BallColor.allCases.first { !used.contains($0) } ?? .white
+        let ball = BallColor.free.first { !used.contains($0) } ?? .white
         let player = Player(id: UUID(), name: "Player \(players.count + 1)", ball: ball)
         players.append(player)
         save()
@@ -93,7 +124,7 @@ final class PlayerRoster {
     }
 
     func setBall(_ id: UUID, to ball: BallColor) {
-        guard let i = players.firstIndex(where: { $0.id == id }) else { return }
+        guard let i = players.firstIndex(where: { $0.id == id }), players[i].owns(ball) else { return }
         players[i].ball = ball
         save()
     }
@@ -112,6 +143,41 @@ final class PlayerRoster {
         players[i].best[level] = min(players[i].best[level] ?? .max, strokes)
         players[i].level = max(players[i].level, level + 1)
         save()
+    }
+
+    /// Notes a hole that was played: counts it, and returns any ball colours it unlocked.
+    /// `holed` is false for a hole that was skipped.
+    @discardableResult
+    func recordHole(strokes: Int, par: Int, holed: Bool, versus: Bool, for id: UUID) -> [BallColor] {
+        guard let i = players.firstIndex(where: { $0.id == id }) else { return [] }
+        if holed {
+            players[i].stats.holesFinished += 1
+            if strokes == 1 { players[i].stats.holeInOnes += 1 }
+            if strokes < par { players[i].stats.holesUnderPar += 1 }
+        }
+        if versus { players[i].stats.versusHoles += 1 }
+        return unlockEarned(at: i)
+    }
+
+    /// A Versus hole won outright.
+    @discardableResult
+    func recordVersusWin(for id: UUID) -> [BallColor] {
+        guard let i = players.firstIndex(where: { $0.id == id }) else { return [] }
+        players[i].stats.versusWins += 1
+        return unlockEarned(at: i)
+    }
+
+    /// Adds any colour whose goal has now been reached, and saves.
+    private func unlockEarned(at i: Int) -> [BallColor] {
+        var earned: [BallColor] = []
+        for color in BallColor.allCases where !players[i].owns(color) {
+            if let goal = color.unlock, players[i].stats.value(of: goal.stat) >= goal.target {
+                players[i].owned.append(color)
+                earned.append(color)
+            }
+        }
+        save()
+        return earned
     }
 
     /// Moves on past a level without finishing it: no best is recorded for it.

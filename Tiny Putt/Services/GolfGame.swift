@@ -81,6 +81,8 @@ final class GolfGame {
     private(set) var phase: Phase = .aiming
     private(set) var overlay: Overlay = .none
     private(set) var versus: Versus?
+    /// Ball colours earned by the hole just finished, shown on the result card.
+    private(set) var newBalls: [NewBall] = []
     private(set) var aimPull: Vec?
     private(set) var estimate: ShotPreview?
 
@@ -171,6 +173,7 @@ final class GolfGame {
         strokes = 0
         phase = .aiming
         overlay = .none
+        newBalls = []
         nextSkipOffer = Self.skipAfter
         aimPull = nil
         estimate = nil
@@ -380,7 +383,7 @@ final class GolfGame {
     func skipHole() {
         guard overlay == .skipOffer else { return }
         if versus != nil {
-            finishHole()
+            finishHole(holed: false)
         } else {
             roster.skip(level: level, for: roster.current.id)
             load(level: roster.current.level)
@@ -468,22 +471,37 @@ final class GolfGame {
         }
     }
 
-    private func finishHole() {
+    /// `holed` is false when the hole was given up on (a skip in a Versus game).
+    private func finishHole(holed: Bool = true) {
         phase = .holed
         if var v = versus {
             v.holeStrokes[v.currentID] = strokes
             v.totals[v.currentID, default: 0] += strokes
+            note(roster.recordHole(strokes: strokes, par: hole.par, holed: holed, versus: true, for: v.currentID), for: v.currentID)
             if v.isLastTurn {
                 v.holesPlayed += 1
                 overlay = .versusHoleDone
+                // The player with the fewest strokes wins the hole; a tie wins nothing.
+                let counts = v.order.compactMap { v.holeStrokes[$0] }
+                if let fewest = counts.min(), counts.filter({ $0 == fewest }).count == 1,
+                   let winner = v.order.first(where: { v.holeStrokes[$0] == fewest }) {
+                    note(roster.recordVersusWin(for: winner), for: winner)
+                }
             } else {
                 overlay = .versusTurnDone
             }
             versus = v
         } else {
             roster.finish(level: level, strokes: strokes, for: roster.current.id)
+            note(roster.recordHole(strokes: strokes, par: hole.par, holed: true, versus: false, for: roster.current.id), for: roster.current.id)
             overlay = .campaignDone
         }
+    }
+
+    /// Remembers newly earned colours so the result card can announce them.
+    private func note(_ colors: [BallColor], for id: UUID) {
+        guard let name = roster.player(id)?.name else { return }
+        for color in colors { newBalls.append(NewBall(player: name, color: color)) }
     }
 
     // MARK: - Drawing helpers
