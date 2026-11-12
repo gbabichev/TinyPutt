@@ -144,14 +144,32 @@ struct ResultCard: View {
                     Text("Hole \(game.level)")
                         .font(.system(size: 24, weight: .heavy, design: .rounded))
                         .foregroundStyle(Ink.dark)
+                    let best = v.order.compactMap { v.holeStrokes[$0] }.min()
+                    HStack(spacing: 0) {
+                        Spacer()
+                        Text("THIS HOLE").frame(width: 82, alignment: .trailing)
+                        Text("TOTAL").frame(width: 62, alignment: .trailing)
+                    }
+                    .font(.system(size: 11, weight: .heavy, design: .rounded))
+                    .tracking(1)
+                    .foregroundStyle(Ink.dark.opacity(0.55))
                     ForEach(v.order, id: \.self) { id in
                         if let p = game.roster.player(id) {
-                            HStack {
+                            let strokes = v.holeStrokes[id] ?? 0
+                            HStack(spacing: 0) {
                                 BallDot(color: p.ball, size: 18)
-                                Text(p.name)
+                                Text(p.name).padding(.leading, 8)
+                                if v.order.count > 1, strokes == best {
+                                    Image(systemName: "crown.fill")
+                                        .font(.system(size: 13))
+                                        .foregroundStyle(Color(hex: 0xE0A526))
+                                        .padding(.leading, 6)
+                                }
                                 Spacer()
-                                Text("\(v.holeStrokes[id] ?? 0)")
-                                Text("(\(v.totals[id] ?? 0))").opacity(0.55)
+                                Text("\(strokes)").frame(width: 82, alignment: .trailing)
+                                Text("\(v.totals[id] ?? 0)")
+                                    .opacity(0.6)
+                                    .frame(width: 62, alignment: .trailing)
                             }
                             .font(.system(size: 17, weight: .bold, design: .rounded))
                             .foregroundStyle(Ink.dark)
