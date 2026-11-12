@@ -94,26 +94,79 @@ func isTooSimilar(_ f: Fingerprint) -> Bool {
     return false
 }
 
-/// True if a ball resting near a windmill can get caught by its blades for a long time (for
+/// True if a ball resting near something that moves can get caught by it for a long time (for
 /// example wedged between a blade and a wall). Such a hole is rejected.
 func windmillTraps(_ hole: Hole) -> Bool {
+    // The places worth testing: round each windmill, and along the path of each moving wall.
+    var spots: [Vec] = []
     for w in hole.windmills {
         for i in 0..<72 {
-            var sim = Simulation(hole: hole)
             let a = Double(i) / 72 * 2 * .pi
-            sim.pos = w.center + Vec(cos(a), sin(a)) * (20 + Double(i % 6) * (w.length - 15) / 6)
-            if !Poly.contains(hole.outline, sim.pos) || sim.pos.distance(to: hole.cup) < 14 { continue }
-            var events: [SimEvent] = []
-            var inside = 0.0
-            for _ in 0..<(240 * 25) {
-                events.removeAll(keepingCapacity: true)
-                if sim.isMoving { _ = sim.step(events: &events) } else { sim.restStep(events: &events) }
-                if (sim.pos - w.center).length < w.length + 8 { inside += Simulation.dt }
-            }
-            if inside > 12 { return true }
+            spots.append(w.center + Vec(cos(a), sin(a)) * (20 + Double(i % 6) * (w.length - 15) / 6))
         }
     }
+    for m in hole.movers {
+        var lo = Vec(.infinity, .infinity), hi = Vec(-.infinity, -.infinity)
+        let period = 2 * Double.pi / m.speed
+        for k in 0..<16 {
+            let e = m.ends(at: period * Double(k) / 16 - m.phase / m.speed)
+            for p in [e.a, e.b] { lo.x = min(lo.x, p.x); lo.y = min(lo.y, p.y); hi.x = max(hi.x, p.x); hi.y = max(hi.y, p.y) }
+        }
+        var y = lo.y - 14
+        while y <= hi.y + 14 {
+            var x = lo.x - 14
+            while x <= hi.x + 14 { spots.append(Vec(x, y)); x += 16 }
+            y += 16
+        }
+    }
+    for spot in spots {
+        guard Poly.contains(hole.outline, spot), spot.distance(to: hole.cup) > 14 else { continue }
+        var sim = Simulation(hole: hole)
+        sim.pos = spot
+        var events: [SimEvent] = []
+        var lastContact = 0
+        for step in 0..<(240 * 20) {
+            events.removeAll(keepingCapacity: true)
+            if sim.isMoving { _ = sim.step(events: &events) } else { sim.restStep(events: &events) }
+            for e in events { if case .windmill = e { lastContact = step } }
+        }
+        // A ball that is knocked a few times is soon clear of it. One that is carried along or
+        // squeezed against a wall is still being hit long after (more than 12 seconds in).
+        if lastContact > 240 * 12 { return true }
+    }
     return false
+}
+
+/// Whether the obstacle a recipe asked for is really on the hole (some do not fit a narrow
+/// course, and then the generator quietly leaves them out).
+func placed(_ m: Middle, in h: Hole) -> Bool {
+    func hasPatch(_ f: (SurfaceKind) -> Bool) -> Bool { h.patches.contains { f($0.kind) } }
+    switch m {
+    case .gate, .pillars, .bar: return true
+    case .sand: return hasPatch { if case .sand = $0 { return true } else { return false } }
+    case .ice: return hasPatch { if case .ice = $0 { return true } else { return false } }
+    case .mud: return hasPatch { if case .mud = $0 { return true } else { return false } }
+    case .pond: return hasPatch { if case .water = $0 { return true } else { return false } }
+    case .lava: return hasPatch { if case .lava = $0 { return true } else { return false } }
+    case .wind: return hasPatch { if case .wind = $0 { return true } else { return false } }
+    case .slope: return hasPatch { if case .slope = $0 { return true } else { return false } }
+    case .boost: return hasPatch { if case .boost = $0 { return true } else { return false } }
+    case .bridge: return hasPatch { if case .bridge = $0 { return true } else { return false } }
+    case .jump: return hasPatch { if case .ramp = $0 { return true } else { return false } }
+    case .bumpers: return !h.bumpers.isEmpty
+    case .windmill: return h.windmills.contains { $0.style == .windmill }
+    case .spinner: return h.windmills.contains { $0.style == .spinner }
+    case .magnet: return !h.magnets.isEmpty
+    case .portal: return h.portals.contains { !$0.isTunnel }
+    case .tunnel: return h.portals.contains { $0.isTunnel }
+    case .slider: return h.movers.contains { if case .slide = $0.motion { return $0.thickness <= 18 } else { return false } }
+    case .piston: return h.movers.contains { if case .slide = $0.motion { return $0.thickness > 18 } else { return false } }
+    case .pendulum: return h.movers.contains { if case .swing = $0.motion { return true } else { return false } }
+    case .oneWay: return !h.oneWays.isEmpty
+    case .door: return !h.doors.isEmpty
+    case .springBars: return !h.bouncePads.isEmpty
+    case .brickWall: return !h.breakables.isEmpty
+    }
 }
 
 /// How many strokes a level should take at the very least, so the game gets harder as it goes.
@@ -125,13 +178,13 @@ func minimumStrokes(level: Int) -> Int {
     }
 }
 
-func acceptable(_ r: Report, level: Int, relaxed: Bool) -> Bool {
+func acceptable(_ r: Report, level: Int, relaxed: Bool, hazardCap: Double = 0.55) -> Bool {
     guard let optimal = r.optimal else { return false }
     let maxOptimal = level <= 25 ? 3 : level <= 38 ? 4 : 5
     let minOptimal = relaxed ? max(2, minimumStrokes(level: level) - 1) : minimumStrokes(level: level)
     return optimal >= minOptimal && optimal <= maxOptimal
         && r.window >= (relaxed ? 0.15 : 0.22)
-        && r.hazardRate <= 0.55
+        && r.hazardRate <= hazardCap
         && r.trapRate <= 0.2
 }
 
@@ -139,7 +192,7 @@ func acceptable(_ r: Report, level: Int, relaxed: Bool) -> Bool {
 func scheduled(level: Int) -> (Template, Middle) {
     let i = level - options.from
     let shapes = HoleGenerator.templates(tier: HoleGenerator.tier(forLevel: level))
-    return (shapes[(i * 5) % shapes.count], Middle.allCases[(i * 5 + i / 13) % Middle.allCases.count])
+    return (shapes[(i * 5) % shapes.count], Middle.allCases[(i * 7 + i / 26) % Middle.allCases.count])
 }
 
 let started = Date()
@@ -150,6 +203,7 @@ for level in options.from...options.to {
     var triedSimilar = 0, triedInvalid = 0, triedRejected = 0
     while found == nil, attempt < options.attempts {
         let relaxed = attempt >= options.attempts / 2
+        let dropLead = attempt >= options.attempts * 3 / 4
         let batch = 8
         var evals = [Evaluation?](repeating: nil, count: batch)
         let base = UInt64(level) * 100_000 + UInt64(attempt)
@@ -159,8 +213,9 @@ for level in options.from...options.to {
             let out = buffer
             DispatchQueue.concurrentPerform(iterations: batch) { i in
                 let seed = base + UInt64(i)
-                let forced: Middle? = relaxed ? nil : wantedMiddle
+                let forced: Middle? = dropLead ? nil : wantedMiddle
                 guard let gen = HoleGenerator.make(level: level, seed: seed, template: wantedTemplate, middle: forced) else { return }
+                if forced != nil, !placed(wantedMiddle, in: gen.hole) { return }
                 if snapshotTemplates[gen.template, default: 0] >= templateCap { return }
                 if gen.middles.contains(where: { snapshotMiddles[$0, default: 0] >= middleCap }) { return }
                 let fp = Fingerprint(gen.hole)
@@ -177,7 +232,8 @@ for level in options.from...options.to {
         for e in evals {
             guard let e else { triedInvalid += 1; continue }
             guard let report = e.report else { triedSimilar += 1; continue }
-            guard acceptable(report, level: level, relaxed: relaxed), !isTooSimilar(e.fingerprint), !windmillTraps(e.gen.hole) else { triedRejected += 1; continue }
+            let crossesWater = e.gen.middles.contains(.bridge) || e.gen.middles.contains(.jump)
+            guard acceptable(report, level: level, relaxed: relaxed, hazardCap: crossesWater ? 0.85 : 0.55), !isTooSimilar(e.fingerprint), !windmillTraps(e.gen.hole) else { triedRejected += 1; continue }
             // Worlds: the best fit for the recipe that was not used in the last two levels.
             let recent = accepted.suffix(2).map(\.theme)
             let theme = HoleGenerator.themeCandidates(for: e.gen).first { !recent.contains($0) } ?? .meadow

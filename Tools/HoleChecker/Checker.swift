@@ -21,6 +21,12 @@ enum Outcome {
     case rest(Vec)
 }
 
+/// What a stroke leaves behind for the next one: which doors are open, which blocks are broken.
+struct Progress: Hashable {
+    var doors: UInt32 = 0
+    var broken: UInt32 = 0
+}
+
 struct Report {
     var optimal: Int?
     /// How much of a small neighbourhood of the winning shot still sinks (0...1).
@@ -46,6 +52,7 @@ struct DistanceField {
         cols = Int(hole.size.x / 12) + 1
         rows = Int(hole.size.y / 12) + 1
         dist = [Float](repeating: .infinity, count: cols * rows)
+        let hasRamp = hole.patches.contains { if case .ramp = $0.kind { return true } else { return false } }
         var free = [Bool](repeating: false, count: cols * rows)
         for cy in 0..<rows {
             for cx in 0..<cols {
@@ -54,9 +61,15 @@ struct DistanceField {
                 var ok = true
                 for s in hole.segments where Poly.closestPoint(s.a, s.b, to: p).distance(to: p) < 9 { ok = false; break }
                 if ok {
-                    for patch in hole.patches {
-                        if case .water = patch.kind, patch.contains(p) { ok = false }
-                        if case .lava = patch.kind, patch.contains(p) { ok = false }
+                    // Water and lava are walked around, unless a bridge crosses them there, or the
+                    // hole has a ramp (then the ball is assumed able to fly over).
+                    var bridged = false
+                    for patch in hole.patches { if case .bridge = patch.kind, patch.contains(p) { bridged = true } }
+                    if !bridged, !hasRamp {
+                        for patch in hole.patches {
+                            if case .water = patch.kind, patch.contains(p) { ok = false }
+                            if case .lava = patch.kind, patch.contains(p) { ok = false }
+                        }
                     }
                 }
                 free[cy * cols + cx] = ok
@@ -65,9 +78,20 @@ struct DistanceField {
         let start = index(of: hole.cup)
         free[start] = true
         dist[start] = 0
+        // Portals join two places: walking into one is walking out of the other.
+        var links: [(Int, Int)] = []
+        for p in hole.portals {
+            let ia = index(of: p.a), ib = index(of: p.b)
+            free[ia] = true; free[ib] = true
+            links.append((ia, ib))
+        }
         var queue = [start], head = 0
         while head < queue.count {
             let i = queue[head]; head += 1
+            for (ia, ib) in links {
+                if i == ia, dist[ib] == .infinity { dist[ib] = dist[i] + 12; queue.append(ib) }
+                if i == ib, dist[ia] == .infinity { dist[ia] = dist[i] + 12; queue.append(ia) }
+            }
             let cx = i % cols, cy = i / cols
             for (dx, dy) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
                 let nx = cx + dx, ny = cy + dy
@@ -111,8 +135,12 @@ final class Checker {
     init(_ hole: Hole) {
         self.hole = hole
         field = DistanceField(hole)
+        // The one clock on the hole: a windmill (or spinner), or a moving wall.
         if let w = hole.windmills.first {
             let period = 2 * Double.pi / (abs(w.speed) * Double(w.blades))
+            offsets = [0, period / 3, period * 2 / 3]
+        } else if let m = hole.movers.first {
+            let period = 2 * Double.pi / m.speed
             offsets = [0, period / 3, period * 2 / 3]
         } else {
             offsets = [0]
@@ -121,11 +149,13 @@ final class Checker {
 
     // MARK: Playing a shot
 
-    func run(from p: Vec, _ shot: Attempt) -> Outcome {
+    func run(from p: Vec, _ shot: Attempt, progress: Progress = Progress()) -> (outcome: Outcome, progress: Progress) {
         sims += 1
         var sim = Simulation(hole: hole)
         sim.pos = p
         sim.time = shot.offset
+        sim.doorsOpen = progress.doors
+        sim.broken = progress.broken
         sim.launch(Vec(cos(shot.angle), sin(shot.angle)) * shot.speed)
         var events: [SimEvent] = []
         var steps = 0
@@ -133,20 +163,22 @@ final class Checker {
             events.removeAll(keepingCapacity: true)
             if sim.step(events: &events) {
                 for e in events {
-                    if case .sank = e { return .sank }
-                    if case .hazard = e { return .hazard }
+                    if case .sank = e { return (.sank, Progress(doors: sim.doorsOpen, broken: sim.broken)) }
+                    if case .hazard = e { return (.hazard, Progress(doors: sim.doorsOpen, broken: sim.broken)) }
                 }
             }
             steps += 1
         }
-        return .rest(sim.pos)
+        return (.rest(sim.pos), Progress(doors: sim.doorsOpen, broken: sim.broken))
     }
 
     /// The route a shot takes (for drawing).
-    func trace(from p: Vec, _ shot: Attempt) -> [Vec] {
+    func trace(from p: Vec, _ shot: Attempt, progress: Progress = Progress()) -> [Vec] {
         var sim = Simulation(hole: hole)
         sim.pos = p
         sim.time = shot.offset
+        sim.doorsOpen = progress.doors
+        sim.broken = progress.broken
         sim.launch(Vec(cos(shot.angle), sin(shot.angle)) * shot.speed)
         var events: [SimEvent] = []
         var points = [p]
@@ -200,14 +232,14 @@ final class Checker {
     // MARK: Robustness
 
     /// How much of the neighbourhood of a winning shot still sinks.
-    func window(from p: Vec, _ shot: Attempt) -> Double {
+    func window(from p: Vec, _ shot: Attempt, progress: Progress = Progress()) -> Double {
         var hits = 0, total = 0
         let times = offsets.count > 1 ? [shot.offset - 0.1, shot.offset, shot.offset + 0.1] : [shot.offset]
         for da in [-2.0, -1.0, 0, 1.0, 2.0] {
             for f in [0.96, 1.0, 1.04] {
                 for t in times {
                     total += 1
-                    if case .sank = run(from: p, Attempt(angle: shot.angle + da * .pi / 180, speed: shot.speed * f, offset: t)) { hits += 1 }
+                    if case .sank = run(from: p, Attempt(angle: shot.angle + da * .pi / 180, speed: shot.speed * f, offset: t), progress: progress).outcome { hits += 1 }
                 }
             }
         }
@@ -216,14 +248,14 @@ final class Checker {
 
     /// Whether a sink can still be found from spots a little off the given one (a ball never stops
     /// exactly where a plan says it will).
-    func regionCanSink(_ p: Vec) -> Bool {
+    func regionCanSink(_ p: Vec, progress: Progress = Progress()) -> Bool {
         var ok = 0
         let around = [Vec(14, 0), Vec(-14, 0), Vec(0, 14), Vec(0, -14)]
         for d in around {
             let q = p + d
             guard Poly.contains(hole.outline, q) else { ok += 1; continue }
             for s in aimedShots(from: q) {
-                if case .sank = run(from: q, s) { ok += 1; break }
+                if case .sank = run(from: q, s, progress: progress).outcome { ok += 1; break }
             }
         }
         return ok >= 3
@@ -238,31 +270,35 @@ final class Checker {
         var hazards = 0, total = 0
         for s in coarseShots() {
             total += 1
-            if case .hazard = run(from: hole.tee, s) { hazards += 1 }
+            if case .hazard = run(from: hole.tee, s).outcome { hazards += 1 }
         }
         report.hazardRate = Double(hazards) / Double(max(1, total))
 
+        typealias Chain = [(from: Vec, shot: Attempt)]
         var states = [hole.tee]
-        var chains: [[(from: Vec, shot: Attempt)]] = [[]]
+        var progresses = [Progress()]
+        var chains: [Chain] = [[]]
         var visited = Set<Int>()
-        var earlyStates: [Vec] = []
+        var earlyStates: [(Vec, Progress)] = []
         let maxDepth = 6
         for depth in 1...maxDepth {
-            var sinks: [(from: Vec, shot: Attempt, chain: [(from: Vec, shot: Attempt)])] = []
-            var next: [(Vec, Double, [(from: Vec, shot: Attempt)])] = []
+            var sinks: [(from: Vec, progress: Progress, shot: Attempt, chain: Chain)] = []
+            var next: [(Vec, Double, Chain, Progress)] = []
             for (si, st) in states.enumerated() {
+                let pg = progresses[si]
                 var shots = aimedShots(from: st)
                 if depth <= 2 || next.count < 8 { shots += coarseShots() }
                 for shot in shots {
-                    switch run(from: st, shot) {
+                    let result = run(from: st, shot, progress: pg)
+                    switch result.outcome {
                     case .sank:
-                        if sinks.count < 40 { sinks.append((st, shot, chains[si])) }
+                        if sinks.count < 40 { sinks.append((st, pg, shot, chains[si])) }
                     case .hazard:
                         break
                     case .rest(let p):
-                        if p.distance(to: st) > 25 {
-                            let key = Int(p.x / 22) * 1000 + Int(p.y / 22)
-                            if visited.insert(key).inserted { next.append((p, field.at(p), chains[si] + [(st, shot)])) }
+                        if p.distance(to: st) > 25 || result.progress != pg {
+                            let key = Int(p.x / 22) * 1000 + Int(p.y / 22) + Int(result.progress.doors) * 1_000_000 + Int(result.progress.broken) * 9_000_000
+                            if visited.insert(key).inserted { next.append((p, field.at(p), chains[si] + [(st, shot)], result.progress)) }
                         }
                     }
                 }
@@ -270,10 +306,10 @@ final class Checker {
             }
             if !sinks.isEmpty {
                 // Prefer the most forgiving winning shot.
-                var scored = sinks.map { (s: $0, w: window(from: $0.from, $0.shot)) }
+                var scored = sinks.map { (s: $0, w: window(from: $0.from, $0.shot, progress: $0.progress)) }
                 scored.sort { $0.w > $1.w }
                 for cand in scored.prefix(6) where cand.w >= 0.2 {
-                    if regionCanSink(cand.s.from) || cand.s.from == hole.tee {
+                    if regionCanSink(cand.s.from, progress: cand.s.progress) || cand.s.from == hole.tee {
                         report.optimal = depth
                         report.window = cand.w
                         report.solution = cand.s.chain + [(cand.s.from, cand.s.shot)]
@@ -282,22 +318,23 @@ final class Checker {
                 }
                 if report.optimal != nil { break }
             }
-            if depth == 1 { earlyStates = next.map { $0.0 } }
+            if depth == 1 { earlyStates = next.map { ($0.0, $0.3) } }
             next.sort { $0.1 < $1.1 }
             let kept = Array(next.prefix(26))
             states = kept.map { $0.0 }
             chains = kept.map { $0.2 }
+            progresses = kept.map { $0.3 }
             if states.isEmpty { break }
         }
 
         // Can the ball get stuck somewhere it started?
         var stuck = 0
         let sample = Array(earlyStates.enumerated().filter { $0.offset % max(1, earlyStates.count / 10) == 0 }.map { $0.element }.prefix(10))
-        for st in sample {
+        for (st, pg) in sample {
             var escaped = false
             for i in 0..<24 where !escaped {
                 for v in [200.0, 500] {
-                    if case .rest(let p) = run(from: st, Attempt(angle: Double(i) / 24 * 2 * .pi, speed: v, offset: offsets[0])), p.distance(to: st) > 60 {
+                    if case .rest(let p) = run(from: st, Attempt(angle: Double(i) / 24 * 2 * .pi, speed: v, offset: offsets[0]), progress: pg).outcome, p.distance(to: st) > 60 {
                         escaped = true
                         break
                     }
@@ -335,6 +372,7 @@ struct Fingerprint {
                         case .water: v = 5
                         case .lava: v = 6
                         case .slope, .wind: v = 7
+                        case .boost, .bridge, .ramp: v = 9
                         }
                     }
                     for b in h.blocks where Poly.contains(b, p) { v = 2 }
@@ -342,6 +380,13 @@ struct Fingerprint {
                 for b in h.bumpers where b.center.distance(to: p) < b.radius + 8 { v = 8 }
                 for w in h.windmills where w.center.distance(to: p) < w.length { v = 8 }
                 for m in h.magnets where m.center.distance(to: p) < 30 { v = 8 }
+                for pt in h.portals where pt.a.distance(to: p) < 24 || pt.b.distance(to: p) < 24 { v = 8 }
+                for sw in h.switches where sw.center.distance(to: p) < 24 { v = 8 }
+                for m in h.movers where Poly.closestPoint(m.p0, m.p1, to: p).distance(to: p) < 18 { v = 8 }
+                for d in h.doors where Poly.contains(d.outline, p) { v = 2 }
+                for b in h.breakables where Poly.contains(b.outline, p) { v = 2 }
+                for g in h.oneWays where Poly.closestPoint(g.a, g.b, to: p).distance(to: p) < 12 { v = 8 }
+                for bar in h.bouncePads where Poly.closestPoint(bar.a, bar.b, to: p).distance(to: p) < 12 { v = 8 }
                 grid[y * c + x] = v
             }
         }

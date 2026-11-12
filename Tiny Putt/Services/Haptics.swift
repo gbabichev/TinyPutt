@@ -88,6 +88,24 @@ final class Haptics {
         #endif
     }
 
+    /// Small taps for the new gadgets.
+    func gadget(_ kind: Gadget) {
+        #if os(iOS)
+        guard isEnabled else { return }
+        switch kind {
+        case .portal: UIImpactFeedbackGenerator(style: .light).impactOccurred(intensity: 0.7)
+        case .boost: UIImpactFeedbackGenerator(style: .medium).impactOccurred(intensity: 0.8)
+        case .switchOn: UIImpactFeedbackGenerator(style: .rigid).impactOccurred(intensity: 0.9)
+        case .shatter: UIImpactFeedbackGenerator(style: .heavy).impactOccurred(intensity: 1)
+        case .springPad: UIImpactFeedbackGenerator(style: .rigid).impactOccurred(intensity: 0.8)
+        case .launch: UIImpactFeedbackGenerator(style: .soft).impactOccurred(intensity: 0.7)
+        case .land: UIImpactFeedbackGenerator(style: .soft).impactOccurred(intensity: 0.5)
+        }
+        #endif
+    }
+
+    enum Gadget { case portal, boost, switchOn, shatter, springPad, launch, land }
+
     func bumper() {
         #if os(iOS)
         guard isEnabled else { return }

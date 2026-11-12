@@ -93,6 +93,12 @@ nonisolated enum Template: Int, CaseIterable, Sendable {
 
 nonisolated enum Middle: Int, CaseIterable, Sendable {
     case gate, pillars, bar, sand, ice, mud, pond, lava, bumpers, windmill, magnet, wind, slope
+    // The newer obstacles.
+    case portal, tunnel, slider, pendulum, piston, spinner, boost, bridge, jump, oneWay, door, springBars, brickWall
+
+    /// Obstacles that move with time. A hole has at most one kind, so a shot never has to beat two
+    /// clocks at once.
+    var isTimed: Bool { [.windmill, .slider, .pendulum, .piston, .spinner].contains(self) }
 }
 
 nonisolated enum Finale: Int, CaseIterable, Sendable {
@@ -121,6 +127,8 @@ nonisolated enum HoleGenerator {
         let spine = layout.spine
         var blocks: [[Vec]] = [], patches: [Patch] = []
         var bumpers: [Bumper] = [], windmills: [Windmill] = [], magnets: [Magnet] = []
+        var portals: [Portal] = [], movers: [Mover] = [], switches: [FloorSwitch] = [], doors: [Door] = []
+        var oneWays: [OneWay] = [], bouncePads: [BouncePad] = [], breakables: [Breakable] = []
 
         // Obstacles along the way.
         let middles = pickMiddles(tier: tier, width: spine.widths.min() ?? 100, first: forcedMiddle, rng: &rng)
@@ -132,6 +140,8 @@ nonisolated enum HoleGenerator {
             b.place(kind, rng: &rng)
             blocks += b.blocks; patches += b.patches
             bumpers += b.bumpers; windmills += b.windmills; magnets += b.magnets
+            portals += b.portals; movers += b.movers; switches += b.switches; doors += b.doors
+            oneWays += b.oneWays; bouncePads += b.bouncePads; breakables += b.breakables
         }
 
         // Tee and cup, near the two ends of the spine.
@@ -161,6 +171,8 @@ nonisolated enum HoleGenerator {
             size: Vec(600, 900),
             outline: layout.outline,
             blocks: blocks, patches: patches, bumpers: bumpers, windmills: windmills, magnets: magnets, bowls: bowls,
+            portals: portals, movers: movers, switches: switches, doors: doors, oneWays: oneWays,
+            bouncePads: bouncePads, breakables: breakables,
             tee: tee, cup: cup, par: par
         )
         hole = randomlyTurned(hole, rng: &rng)
@@ -174,6 +186,8 @@ nonisolated enum HoleGenerator {
         if g.middles.contains(.ice) || g.middles.contains(.wind) { order.append(.winter) }
         if g.middles.contains(.sand) || g.middles.contains(.lava) || g.finale == .sandRing || g.finale == .lavaFlanks { order.append(.desert) }
         if g.middles.contains(.bumpers) || g.middles.contains(.magnet) || g.finale == .bumperGuard { order.append(.farm) }
+        if g.middles.contains(.portal) || g.middles.contains(.tunnel) || g.middles.contains(.springBars) || g.middles.contains(.piston) { order.append(.farm) }
+        if g.middles.contains(.bridge) || g.middles.contains(.jump) || g.middles.contains(.brickWall) { order.append(.desert) }
         order.append(.meadow)
         for t in ThemeID.allCases where !order.contains(t) { order.append(t) }
         return order
@@ -201,20 +215,25 @@ nonisolated enum HoleGenerator {
         }
         var pool = Middle.allCases
         // Narrow courses cannot hold the big gadgets.
-        if width < 150 { pool.removeAll { $0 == .bar || $0 == .pillars } }
-        if width < 120 { pool.removeAll { $0 == .windmill || $0 == .bumpers || $0 == .pond || $0 == .lava } }
+        if width < 150 { pool.removeAll { [.bar, .pillars].contains($0) } }
+        if width < 115 { pool.removeAll { [.pendulum, .spinner, .slider, .springBars].contains($0) } }
+        if width < 120 { pool.removeAll { [.windmill, .bumpers, .pond, .lava, .portal, .tunnel, .bridge, .jump, .piston].contains($0) } }
         var picked: [Middle] = []
-        if let first, pool.contains(first) {
-            pool.removeAll { $0 == first }
-            if [.sand, .mud, .ice].contains(first) { pool.removeAll { [.sand, .mud, .ice].contains($0) } }
-            picked.append(first)
-        }
-        while picked.count < min(count, 3), !pool.isEmpty {
-            let m = rng.pick(pool)
+        func take(_ m: Middle) {
             pool.removeAll { $0 == m }
             // Two floor surfaces next to each other turn into mush.
             if [.sand, .mud, .ice].contains(m) { pool.removeAll { [.sand, .mud, .ice].contains($0) } }
+            // One clock per hole.
+            if m.isTimed { pool.removeAll { $0.isTimed } }
+            // Rivers and walls with a trick are each used once.
+            if [.bridge, .jump, .pond, .lava].contains(m) { pool.removeAll { [.bridge, .jump].contains($0) } }
+            if [.portal, .tunnel].contains(m) { pool.removeAll { [.portal, .tunnel].contains($0) } }
+            if [.door, .brickWall, .oneWay].contains(m) { pool.removeAll { [.door, .brickWall, .oneWay].contains($0) } }
             picked.append(m)
+        }
+        if let first, pool.contains(first) { take(first) }
+        while picked.count < min(count, 3), !pool.isEmpty {
+            take(rng.pick(pool))
         }
         return picked
     }
@@ -333,12 +352,19 @@ nonisolated enum HoleGenerator {
                 switch patch.kind {
                 case .water, .lava:
                     for off in [Vec.zero, Vec(30, 0), Vec(-30, 0), Vec(0, 30), Vec(0, -30)] where patch.contains(p + off) { return false }
+                case .ramp, .boost:
+                    // A ball must not be set off just by being put down, or by a tap from the tee.
+                    for off in [Vec.zero, Vec(22, 0), Vec(-22, 0), Vec(0, 22), Vec(0, -22), Vec(44, 0), Vec(-44, 0), Vec(0, 44), Vec(0, -44)] where patch.contains(p + off) { return false }
                 default: break
                 }
             }
             for bm in h.bumpers where bm.center.distance(to: p) < bm.radius + 34 { return false }
             for w in h.windmills where w.center.distance(to: p) < w.length + 30 { return false }
             for m in h.magnets where m.center.distance(to: p) < 40 { return false }
+            for pt in h.portals where pt.a.distance(to: p) < 55 || pt.b.distance(to: p) < 55 { return false }
+            for sw in h.switches where sw.center.distance(to: p) < 45 { return false }
+            for bar in h.bouncePads where Poly.closestPoint(bar.a, bar.b, to: p).distance(to: p) < 40 { return false }
+            for m in h.movers where Poly.closestPoint(m.p0, m.p1, to: p).distance(to: p) < 50 { return false }
         }
         return h.tee.distance(to: h.cup) > 260
     }
@@ -371,6 +397,13 @@ private nonisolated struct Builder {
     var bumpers: [Bumper] = []
     var windmills: [Windmill] = []
     var magnets: [Magnet] = []
+    var portals: [Portal] = []
+    var movers: [Mover] = []
+    var switches: [FloorSwitch] = []
+    var doors: [Door] = []
+    var oneWays: [OneWay] = []
+    var bouncePads: [BouncePad] = []
+    var breakables: [Breakable] = []
 
     init(frame: Frame, tier: Int) {
         self.frame = frame
@@ -499,6 +532,100 @@ private nonisolated struct Builder {
             let len = rng.range(120, 200)
             let accel = rng.chance(0.6) ? frame.dir * (rng.sign() * rng.range(120, 170)) : frame.n * (rng.sign() * rng.range(120, 160))
             patches.append(Patch(.slope(accel), Poly.rounded(rect(-len / 2, len / 2, -w / 2 - 14, w / 2 + 14), radius: 12)))
+        case .portal, .tunnel:
+            guard w >= 110 else { return }
+            let tunnel = kind == .tunnel
+            // A solid wall across the whole course: the only way on is through the openings.
+            blocks.append(rect(-7, 7, -w / 2 - 14, w / 2 + 14, round: 4))
+            let lim = max(8, w / 2 - 32)
+            let reach = tunnel ? rng.range(80, 110) : rng.range(70, 90)
+            let a = frame.at(along: -reach, across: rng.range(-lim, lim))
+            let b = frame.at(along: reach, across: rng.range(-lim, lim))
+            portals.append(Portal(a: a, b: b, radius: 15, delay: tunnel ? 0.45 : 0))
+        case .slider:
+            guard w >= 115 else { return }
+            let length = w * 0.55
+            let amp = (w - length) / 2 - 5
+            movers.append(Mover(p0: frame.at(along: 0, across: -length / 2), p1: frame.at(along: 0, across: length / 2),
+                                thickness: 14, motion: .slide(dir: frame.n, amplitude: amp),
+                                speed: rng.range(0.9, 1.4), phase: rng.range(0, 6.28)))
+        case .pendulum:
+            guard w >= 115 else { return }
+            let side = rng.sign()
+            let pivot = frame.at(along: 0, across: side * (w / 2 + 8))
+            let tip = frame.at(along: 0, across: side * (w / 2 + 8) - side * (w * 0.9))
+            movers.append(Mover(p0: pivot, p1: tip, thickness: 12, motion: .swing(pivot: pivot, amplitude: rng.range(0.85, 1.1)),
+                                speed: rng.range(0.9, 1.3), phase: rng.range(0, 6.28)))
+        case .piston:
+            guard w >= 120 else { return }
+            let len = 36.0, depth = w * 0.27, amp = w * 0.2
+            let speed = rng.range(1.0, 1.5)
+            let base = rng.range(0, 6.28)
+            for (k, side) in [-1.0, 1.0].enumerated() {
+                let along = side * 24
+                let wall = side * (w / 2 + 14)
+                let inward = -side
+                let tip = frame.at(along: along, across: wall + inward * depth)
+                let tail = frame.at(along: along, across: wall + inward * (depth - len))
+                movers.append(Mover(p0: tail, p1: tip, thickness: 22, motion: .slide(dir: frame.n * inward, amplitude: amp),
+                                    speed: speed, phase: base + Double(k) * .pi))
+            }
+        case .spinner:
+            guard w >= 115 else { return }
+            let length = min(w * 0.36, 70)
+            windmills.append(Windmill(style: .spinner, center: frame.pos, length: length, blades: 2,
+                                      speed: rng.range(1.7, 2.4) * rng.sign(), phase: rng.range(0, 6.28), hub: 10, thickness: 9))
+        case .boost:
+            let full = rng.chance(0.5)
+            let span = full ? w + 28 : w * 0.5
+            let o = full ? 0 : rng.range(-(w / 2 - span / 2 - 6), w / 2 - span / 2 - 6)
+            let dir = rng.chance(0.8) ? frame.dir : frame.n * rng.sign()
+            patches.append(Patch(.boost(dir), Poly.rounded(rect(-20, 20, o - span / 2, o + span / 2), radius: 8)))
+        case .bridge:
+            guard w >= 110 else { return }
+            let river: SurfaceKind = (tier >= 2 && rng.chance(0.4)) ? .lava : .water
+            patches.append(Patch(river, Poly.rounded(rect(-34, 34, -w / 2 - 14, w / 2 + 14), radius: 12)))
+            let o = rng.range(-(w / 2 - 38), w / 2 - 38)
+            patches.append(Patch(.bridge, rect(-42, 42, o - 24, o + 24)))
+            // A rail down each side keeps a ball on the bridge once it is on it.
+            blocks.append(rect(-34, 34, o - 29, o - 24, round: 2))
+            blocks.append(rect(-34, 34, o + 24, o + 29, round: 2))
+        case .jump:
+            guard w >= 110 else { return }
+            // The ramp is in front of the river, so move the whole thing on a little to keep the
+            // ramp well clear of the tee.
+            frame.pos = frame.pos + frame.dir * 46
+            patches.append(Patch(.water, Poly.rounded(rect(-45, 45, -w / 2 - 14, w / 2 + 14), radius: 12)))
+            patches.append(Patch(.ramp(frame.dir), Poly.rounded(rect(-78, -50, -w / 2 - 14, w / 2 + 14), radius: 6)))
+        case .oneWay:
+            guard w >= 100 else { return }
+            let g = rng.range(56, 72)
+            let lim = w / 2 - g / 2 - 14
+            guard lim > 2 else { return }
+            let o = rng.range(-lim, lim)
+            blocks.append(rect(-7, 7, -w / 2 - 14, o - g / 2, round: 4))
+            blocks.append(rect(-7, 7, o + g / 2, w / 2 + 14, round: 4))
+            oneWays.append(OneWay(a: frame.at(along: 0, across: o - g / 2), b: frame.at(along: 0, across: o + g / 2), front: frame.dir))
+        case .door:
+            guard w >= 100 else { return }
+            doors.append(Door(outline: rect(-7, 7, -w / 2 - 14, w / 2 + 14, round: 3)))
+            let lim = max(6, w / 2 - 26)
+            switches.append(FloorSwitch(center: frame.at(along: -rng.range(55, 85), across: rng.range(-lim, lim)), radius: 17))
+        case .springBars:
+            guard w >= 110 else { return }
+            for (k, side) in [-1.0, 1.0].enumerated() {
+                let a = frame.at(along: (k == 0 ? -34 : 34), across: side * (w / 2 + 8))
+                let b = a + frame.n * (-side * w * 0.36) + frame.dir * 22
+                bouncePads.append(BouncePad(a: a, b: b))
+            }
+        case .brickWall:
+            guard w >= 100 else { return }
+            let parts = 3
+            let span = (w + 28) / Double(parts)
+            for k in 0..<parts {
+                let c0 = -w / 2 - 14 + span * Double(k)
+                breakables.append(Breakable(outline: rect(-8, 8, c0 + 1, c0 + span - 1, round: 3), breakSpeed: 300))
+            }
         }
     }
 
@@ -532,6 +659,8 @@ nonisolated extension Hole {
             switch kind {
             case .slope(let v): kind = .slope(vector(v))
             case .wind(let v): kind = .wind(vector(v))
+            case .boost(let v): kind = .boost(vector(v))
+            case .ramp(let v): kind = .ramp(vector(v))
             default: break
             }
             return Patch(kind, patch.outline.map(point))
@@ -548,6 +677,21 @@ nonisolated extension Hole {
             name: name, theme: theme, size: size,
             outline: outline.map(point), blocks: blocks.map { $0.map(point) },
             patches: newPatches, bumpers: bm, windmills: wm, magnets: mg, bowls: bw,
+            portals: portals.map { Portal(a: point($0.a), b: point($0.b), radius: $0.radius, delay: $0.delay) },
+            movers: movers.map { m in
+                // A mirror or a quarter turn reverses which way round things swing.
+                let motion: Mover.Motion
+                switch m.motion {
+                case .slide(let dir, let amplitude): motion = .slide(dir: vector(dir), amplitude: amplitude)
+                case .swing(let pivot, let amplitude): motion = .swing(pivot: point(pivot), amplitude: -amplitude)
+                }
+                return Mover(p0: point(m.p0), p1: point(m.p1), thickness: m.thickness, motion: motion, speed: m.speed, phase: m.phase)
+            },
+            switches: switches.map { FloorSwitch(center: point($0.center), radius: $0.radius) },
+            doors: doors.map { Door(outline: $0.outline.map(point)) },
+            oneWays: oneWays.map { OneWay(a: point($0.a), b: point($0.b), front: vector($0.front)) },
+            bouncePads: bouncePads.map { BouncePad(a: point($0.a), b: point($0.b)) },
+            breakables: breakables.map { Breakable(outline: $0.outline.map(point), breakSpeed: $0.breakSpeed) },
             tee: point(tee), cup: point(cup), par: par
         )
     }

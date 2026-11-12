@@ -275,7 +275,10 @@ final class GolfGame {
         var steps = 0
         while probe.isMoving, steps < 240 * 12, length < maxLength {
             let ended = probe.step(events: &events)
+            // The guide stops where the ball goes through a portal: it never jumps across the gap.
+            let jumped = events.contains { if case .portal = $0 { return true } else { return false } }
             events.removeAll(keepingCapacity: true)
+            if jumped { break }
             steps += 1
             if let last = points.last, probe.pos.distance(to: last) >= 5 {
                 length += probe.pos.distance(to: last)
@@ -290,7 +293,7 @@ final class GolfGame {
     // MARK: - Frame update
 
     /// Whether anything is moving and the canvas must draw at the full frame rate.
-    var isBusy: Bool { phase != .aiming || aimPull != nil || popTime < 1 || !hole.windmills.isEmpty }
+    var isBusy: Bool { phase != .aiming || aimPull != nil || popTime < 1 || hole.hasTimedObstacles }
 
     func advance(to date: Date) {
         let now = date.timeIntervalSinceReferenceDate
@@ -305,7 +308,7 @@ final class GolfGame {
 
         switch phase {
         case .aiming:
-            if hole.windmills.isEmpty {
+            if !hole.hasTimedObstacles {
                 sim.time += dt
             } else {
                 // A blade that sweeps into the resting ball knocks it: it rolls (no stroke).
@@ -385,6 +388,30 @@ final class GolfGame {
                     lastWindmillSound = animTime
                     sounds.play(.bounce(impact: min(1, speed / 500)))
                 }
+            case .portal(let tunnel):
+                sounds.play(tunnel ? .tunnel : .portal)
+                haptics.gadget(.portal)
+            case .boost:
+                sounds.play(.boost)
+                haptics.gadget(.boost)
+            case .switchPressed:
+                sounds.play(.switchOn)
+                haptics.gadget(.switchOn)
+            case .broke:
+                sounds.play(.shatter)
+                haptics.gadget(.shatter)
+            case .pad:
+                if animTime - lastBounceSound > 0.05 {
+                    lastBounceSound = animTime
+                    sounds.play(.springPad)
+                    haptics.gadget(.springPad)
+                }
+            case .launch:
+                sounds.play(.launch)
+                haptics.gadget(.launch)
+            case .land:
+                sounds.play(.land)
+                haptics.gadget(.land)
             case .bumper(let index):
                 if bumperPulse.indices.contains(index) { bumperPulse[index] = 1 }
                 sounds.play(.bumper)
@@ -433,21 +460,25 @@ final class GolfGame {
 
     /// How the ball is drawn right now: where, and how big (it pops in at the tee, shrinks into
     /// the cup, and sinks into water).
-    var displayBall: (pos: Vec, scale: Double)? {
+    var displayBall: (pos: Vec, scale: Double, lift: Double)? {
         switch phase {
         case .sinking:
             let t = min(1, phaseTime / 0.4)
-            return (sim.pos, 1 - t * 0.9)
+            return (sim.pos, 1 - t * 0.9, 0)
         case .hazard:
             let t = min(1, phaseTime / 0.35)
-            return t >= 1 ? nil : (hazardAt, 1 - t)
+            return t >= 1 ? nil : (hazardAt, 1 - t, 0)
         case .holed:
             return nil
         default:
-            guard popTime < 1 else { return (sim.pos, 1) }
+            // Inside a tunnel the ball is out of sight.
+            if sim.holdTime > 0 { return nil }
+            // In the air after a ramp it is bigger and lifted off its shadow.
+            let hop = sim.isFlying ? sin(sim.airProgress * .pi) : 0
+            guard popTime < 1 else { return (sim.pos, 1 + 0.45 * hop, 16 * hop) }
             let u = popTime - 1
             let c1 = 2.2
-            return (sim.pos, max(0, 1 + (c1 + 1) * u * u * u + c1 * u * u))
+            return (sim.pos, max(0, 1 + (c1 + 1) * u * u * u + c1 * u * u), 0)
         }
     }
 

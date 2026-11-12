@@ -57,6 +57,9 @@ func writeSheet(_ holes: [Hole], to path: String, columns: Int = 8, cell: Int = 
             case .lava: c = 0xD2431F
             case .slope: c = 0xB9E5C2
             case .wind: c = 0xFFFFFF
+            case .boost: c = 0xFFC83D
+            case .bridge: c = 0xB9834A
+            case .ramp: c = 0xC9C9C9
             }
             ctx.setFillColor(color(c, { if case .wind = p.kind { return 0.45 }; return 1 }()))
             ctx.addPath(poly(p.outline, t)); ctx.fillPath()
@@ -79,6 +82,31 @@ func writeSheet(_ holes: [Hole], to path: String, columns: Int = 8, cell: Int = 
             let c = t(m.center), r = CGFloat(m.radius) * scale * 0.5
             ctx.setStrokeColor(color(m.strength > 0 ? 0xA855F7 : 0xF97316)); ctx.setLineWidth(1.5)
             ctx.strokeEllipse(in: CGRect(x: c.x - r, y: c.y - r, width: 2 * r, height: 2 * r))
+        }
+        for pt in h.portals {
+            for end in [pt.a, pt.b] {
+                let c = t(end), r = CGFloat(pt.radius) * scale
+                ctx.setFillColor(color(pt.isTunnel ? 0x8A8A8A : 0xA855F7)); ctx.fillEllipse(in: CGRect(x: c.x - r, y: c.y - r, width: 2 * r, height: 2 * r))
+            }
+        }
+        for m in h.movers {
+            let e = m.ends(at: 0)
+            ctx.setStrokeColor(color(0x3B6FD6)); ctx.setLineWidth(CGFloat(m.thickness) * scale)
+            ctx.move(to: t(e.a)); ctx.addLine(to: t(e.b)); ctx.strokePath()
+        }
+        for sw in h.switches {
+            let c = t(sw.center), r = CGFloat(sw.radius) * scale
+            ctx.setFillColor(color(0xE5484D)); ctx.fillEllipse(in: CGRect(x: c.x - r, y: c.y - r, width: 2 * r, height: 2 * r))
+        }
+        for d in h.doors { ctx.setFillColor(color(0xE5484D)); ctx.addPath(poly(d.outline, t)); ctx.fillPath() }
+        for b in h.breakables { ctx.setFillColor(color(0xE2AF8B)); ctx.addPath(poly(b.outline, t)); ctx.fillPath() }
+        for g in h.oneWays {
+            ctx.setStrokeColor(color(0x6D5BD0)); ctx.setLineWidth(3)
+            ctx.move(to: t(g.a)); ctx.addLine(to: t(g.b)); ctx.strokePath()
+        }
+        for bar in h.bouncePads {
+            ctx.setStrokeColor(color(0xE5484D)); ctx.setLineWidth(4)
+            ctx.move(to: t(bar.a)); ctx.addLine(to: t(bar.b)); ctx.strokePath()
         }
         for w in h.windmills {
             let c = t(w.center)

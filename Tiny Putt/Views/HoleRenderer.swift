@@ -47,13 +47,14 @@ enum HoleRenderer {
         // Walls inside the course end flush with its edge.
         for block in hole.blocks { drawBlock(&onCourse, block, pal: pal) }
         for m in hole.magnets { drawMagnet(&w, m, pal: pal, time: time) }
+        drawGadgets(&w, &onCourse, game: game, pal: pal, time: time)
         for (i, b) in hole.bumpers.enumerated() {
             drawBumper(&w, b, pal: pal, pulse: i < game.bumperPulse.count ? game.bumperPulse[i] : 0)
         }
 
         drawRipples(&w, game: game)
         if let ball = game.displayBall {
-            drawBall(&w, at: ball.pos, scale: ball.scale, color: game.ballColor.color)
+            drawBall(&w, at: ball.pos, scale: ball.scale, lift: ball.lift, color: game.ballColor.color)
         }
         if let pull = game.aimPull { drawAim(&w, game: game, pull: pull) }
         for wm in hole.windmills { drawWindmill(&w, wm, pal: pal, time: game.sim.time) }
@@ -256,6 +257,22 @@ enum HoleRenderer {
             inside.fill(outline, with: .color(.white.opacity(0.10)))
             chevrons(&inside, patch: patch, dir: Vec(a.x, a.y).normalized, time: time, color: .white.opacity(0.4), spacing: 34, speed: 18)
             w.stroke(outline, with: .color(.white.opacity(0.35)), style: StrokeStyle(lineWidth: 2, dash: [6, 5]))
+        case .boost(let dir):
+            // A bright pad with arrows racing along it.
+            w.fill(outline, with: .color(Color(hex: 0xFFC83D).opacity(0.55)))
+            chevrons(&inside, patch: patch, dir: dir.normalized, time: time, color: .white.opacity(0.95), spacing: 18, speed: 70)
+            w.stroke(outline, with: .color(Color(hex: 0xE08A00)), style: StrokeStyle(lineWidth: 3, lineJoin: .round))
+        case .bridge:
+            drawBridge(&w, patch, pal: pal)
+        case .ramp(let dir):
+            // A wedge that rises toward its far end: dark at the foot, bright at the lip.
+            let d = dir.normalized
+            let a = Vec(Double(lo.x + hi.x) / 2, Double(lo.y + hi.y) / 2)
+            let half = abs(d.x) * Double(hi.x - lo.x) / 2 + abs(d.y) * Double(hi.y - lo.y) / 2
+            let p0 = (a - d * half).cg, p1 = (a + d * half).cg
+            w.fill(outline, with: .linearGradient(Gradient(colors: [.black.opacity(0.28), .white.opacity(0.42)]), startPoint: p0, endPoint: p1))
+            chevrons(&inside, patch: patch, dir: d, time: time, color: .white.opacity(0.75), spacing: 22, speed: 28)
+            w.stroke(outline, with: .color(.white.opacity(0.7)), style: StrokeStyle(lineWidth: 2.5, lineJoin: .round))
         case .wind(let a):
             for lane in stride(from: 0.0, to: 1.0, by: 0.11) {
                 let dir = Vec(a.x, a.y).normalized
@@ -278,7 +295,7 @@ enum HoleRenderer {
         }
     }
 
-    private static func chevrons(_ ctx: inout GraphicsContext, patch: Patch, dir: Vec, time: Double, color: Color, spacing: Double, speed: Double) {
+    static func chevrons(_ ctx: inout GraphicsContext, patch: Patch, dir: Vec, time: Double, color: Color, spacing: Double, speed: Double) {
         let across = dir.perp
         let centre = Vec((patch.lo.x + patch.hi.x) / 2, (patch.lo.y + patch.hi.y) / 2)
         let span = max(patch.hi.x - patch.lo.x, patch.hi.y - patch.lo.y)
@@ -397,18 +414,21 @@ enum HoleRenderer {
         }
         let hub = w.star(center: c, outer: CGFloat(m.hub), inner: CGFloat(m.hub) * 0.92, points: 8, rotation: .pi / 8)
         w.fill(hub.offsetBy(dx: 2, dy: 4), with: .color(.black.opacity(0.25)))
-        w.fill(hub, with: .color(pal.bumper))
+        w.fill(hub, with: .color(m.style == .spinner ? Color(hex: 0x3B6FD6) : pal.bumper))
         w.stroke(hub, with: .color(.black.opacity(0.18)), lineWidth: 1.5)
         w.fill(w.circle(c, CGFloat(m.hub) * 0.4), with: .color(Color(hex: 0x8B2F2F)))
     }
 
     // MARK: - Ball and aiming
 
-    private static func drawBall(_ w: inout GraphicsContext, at p: Vec, scale: Double, color: Color) {
+    private static func drawBall(_ w: inout GraphicsContext, at p: Vec, scale: Double, lift: Double = 0, color: Color) {
         guard scale > 0.01 else { return }
-        let c = p.cg
+        let ground = p.cg
         let r = CGFloat(Simulation.ballRadius * scale)
-        w.fill(w.circle(CGPoint(x: c.x + 1.5, y: c.y + 2.5), r), with: .color(.black.opacity(0.28)))
+        // The shadow stays on the ground (smaller and fainter the higher the ball is).
+        let shadowR = lift > 0 ? CGFloat(Simulation.ballRadius) * (1 - CGFloat(lift) * 0.012) : r
+        w.fill(w.circle(CGPoint(x: ground.x + 1.5, y: ground.y + 2.5), shadowR), with: .color(.black.opacity(lift > 0 ? 0.22 : 0.28)))
+        let c = CGPoint(x: ground.x, y: ground.y - CGFloat(lift))
         w.fill(w.circle(c, r), with: .color(color))
         w.stroke(w.circle(c, r), with: .color(.black.opacity(0.22)), lineWidth: 1)
         w.fill(w.circle(CGPoint(x: c.x - r * 0.3, y: c.y - r * 0.3), r * 0.32), with: .color(.white.opacity(0.65)))

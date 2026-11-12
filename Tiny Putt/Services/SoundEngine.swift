@@ -17,6 +17,14 @@ final class SoundEngine {
         /// The ball is rolling close to the cup. `closeness` runs from 0 (far) to 1 (at the rim).
         case cupRattle(closeness: Double)
         case cup
+        case portal
+        case tunnel
+        case boost
+        case switchOn
+        case shatter
+        case springPad
+        case launch
+        case land
         case splash
         case lava
     }
@@ -36,6 +44,7 @@ final class SoundEngine {
     private var bounceBuffers: [AVAudioPCMBuffer] = []
     private var bumperBuffer: AVAudioPCMBuffer?
     private var rattleBuffers: [AVAudioPCMBuffer] = []
+    private var gadgetBuffers: [String: AVAudioPCMBuffer] = [:]
     private var cupBuffer: AVAudioPCMBuffer?
     private var splashBuffer: AVAudioPCMBuffer?
     private var lavaBuffer: AVAudioPCMBuffer?
@@ -54,6 +63,10 @@ final class SoundEngine {
         bounceBuffers = [(330.0, 0.15), (440.0, 0.5), (550.0, 0.9)].map { makeBounce(frequency: $0.0, impact: $0.1) }
         bumperBuffer = makeBumper()
         rattleBuffers = [900, 1250, 1700].map(makeRattle)
+        gadgetBuffers = [
+            "portal": makePortal(), "tunnel": makeTunnel(), "boost": makeBoost(), "switchOn": makeSwitch(),
+            "shatter": makeShatter(), "springPad": makeSpring(), "launch": makeLaunch(), "land": makeLand(),
+        ]
         cupBuffer = makeCup()
         splashBuffer = makeSplash()
         lavaBuffer = makeLava()
@@ -91,6 +104,14 @@ final class SoundEngine {
         case .bumper: buffer = bumperBuffer
         case .cupRattle(let closeness): buffer = rattleBuffers[min(2, Int(closeness * 3))]
         case .cup: buffer = cupBuffer
+        case .portal: buffer = gadgetBuffers["portal"]
+        case .tunnel: buffer = gadgetBuffers["tunnel"]
+        case .boost: buffer = gadgetBuffers["boost"]
+        case .switchOn: buffer = gadgetBuffers["switchOn"]
+        case .shatter: buffer = gadgetBuffers["shatter"]
+        case .springPad: buffer = gadgetBuffers["springPad"]
+        case .launch: buffer = gadgetBuffers["launch"]
+        case .land: buffer = gadgetBuffers["land"]
         case .splash: buffer = splashBuffer
         case .lava: buffer = lavaBuffer
         }
@@ -255,6 +276,104 @@ final class SoundEngine {
                 value += sin(2 * Double.pi * 2300 * lt) * exp(-lt * 22) * 0.12
             }
             return value
+        }
+    }
+
+    // MARK: - Gadget sounds
+
+    /// A rising, shimmering whoosh: into a portal.
+    private func makePortal() -> AVAudioPCMBuffer {
+        render(duration: 0.34) { t in
+            let env = sin(min(1, t / 0.34) * .pi)
+            let f = 320 + 900 * (t / 0.34)
+            let wobble = 1 + 0.25 * sin(2 * Double.pi * 18 * t)
+            let tone = sin(2 * Double.pi * f * t) * 0.5 + sin(2 * Double.pi * f * 1.5 * t) * 0.25
+            return tone * wobble * env * 0.32
+        }
+    }
+
+    /// A hollow, falling rush: into a pipe.
+    private func makeTunnel() -> AVAudioPCMBuffer {
+        var smooth = 0.0
+        return render(duration: 0.45) { t in
+            smooth += (Double.random(in: -1...1) - smooth) * 0.12
+            let env = exp(-t * 6) * min(1, t * 40)
+            let hum = sin(2 * Double.pi * (230 - 110 * t) * t) * 0.4
+            return (smooth * 1.6 + hum) * env * 0.35
+        }
+    }
+
+    /// A quick rising zip: a speed pad.
+    private func makeBoost() -> AVAudioPCMBuffer {
+        render(duration: 0.24) { t in
+            let f = 420 + 1500 * (t / 0.24) * (t / 0.24)
+            let env = min(1, t * 80) * exp(-t * 9)
+            let tone = sin(2 * Double.pi * f * t) + 0.4 * sin(4 * Double.pi * f * t)
+            return tone * env * 0.26
+        }
+    }
+
+    /// A switch clacking down, and a small bell to say a door has opened.
+    private func makeSwitch() -> AVAudioPCMBuffer {
+        var lowpass = 0.0
+        return render(duration: 0.5) { t in
+            let raw = Double.random(in: -1...1)
+            lowpass += (raw - lowpass) * 0.2
+            let click = (raw - lowpass) * exp(-t * 500) * 0.4
+            let thunk = sin(2 * Double.pi * 95 * t) * exp(-t * 30) * 0.5
+            var ding = 0.0
+            if t > 0.06 {
+                let lt = t - 0.06
+                ding = (sin(2 * Double.pi * 1320 * lt) + 0.4 * sin(2 * Double.pi * 1980 * lt)) * exp(-lt * 9) * 0.22
+            }
+            return click + thunk + ding
+        }
+    }
+
+    /// A block cracking and crumbling.
+    private func makeShatter() -> AVAudioPCMBuffer {
+        var lowpass = 0.0
+        var crumbs: [Double] = (0..<9).map { _ in Double.random(in: 0.03...0.32) }
+        crumbs.sort()
+        return render(duration: 0.5) { t in
+            let raw = Double.random(in: -1...1)
+            lowpass += (raw - lowpass) * 0.35
+            var value = (raw - lowpass) * exp(-t * 14) * 0.55
+            value += sin(2 * Double.pi * 120 * t) * exp(-t * 25) * 0.4
+            for c in crumbs where t > c {
+                let lt = t - c
+                value += Double.random(in: -1...1) * exp(-lt * 160) * 0.35
+            }
+            return value
+        }
+    }
+
+    /// A spring boing: a bouncy bar.
+    private func makeSpring() -> AVAudioPCMBuffer {
+        render(duration: 0.34) { t in
+            let f = 210 + 230 * exp(-t * 14)
+            let wobble = 1 + 0.06 * sin(2 * Double.pi * 28 * t)
+            return sin(2 * Double.pi * f * wobble * t) * exp(-t * 11) * 0.4
+        }
+    }
+
+    /// A short upward swoosh: taking off from a ramp.
+    private func makeLaunch() -> AVAudioPCMBuffer {
+        var smooth = 0.0
+        return render(duration: 0.26) { t in
+            smooth += (Double.random(in: -1...1) - smooth) * (0.06 + 0.5 * t)
+            let env = sin(min(1, t / 0.26) * .pi)
+            return (smooth * 1.4 + sin(2 * Double.pi * (260 + 700 * t) * t) * 0.25) * env * 0.3
+        }
+    }
+
+    /// A soft thud: coming down.
+    private func makeLand() -> AVAudioPCMBuffer {
+        var lowpass = 0.0
+        return render(duration: 0.16) { t in
+            let raw = Double.random(in: -1...1)
+            lowpass += (raw - lowpass) * 0.3
+            return sin(2 * Double.pi * 140 * t) * exp(-t * 32) * 0.5 + (raw - lowpass) * exp(-t * 300) * 0.15
         }
     }
 }
