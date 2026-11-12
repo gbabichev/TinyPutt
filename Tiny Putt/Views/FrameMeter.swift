@@ -28,13 +28,13 @@ final class FrameMeter {
     /// Takes the counts since the last call, over `seconds`.
     func take(over seconds: Double) -> String {
         defer { draws = 0; ticks = 0; longestGap = 0 }
-        return String(format: "draw %.0f fps · tick %.0f/s · worst gap %.0f ms",
-                      Double(draws) / seconds, Double(ticks) / seconds, longestGap * 1000)
+        return "draw \(Int((Double(draws) / seconds).rounded())) fps · tick \(Int((Double(ticks) / seconds).rounded()))/s · worst gap \(Int((longestGap * 1000).rounded())) ms"
     }
 }
 
 struct FrameCounter: View {
     let meter: FrameMeter
+    let game: GolfGame
     @State private var text = "…"
 
     var body: some View {
@@ -48,7 +48,7 @@ struct FrameCounter: View {
             .task {
                 while !Task.isCancelled {
                     try? await Task.sleep(for: .milliseconds(500))
-                    text = meter.take(over: 0.5)
+                    text = meter.take(over: 0.5) + (game.isBusy ? "" : " · resting")
                 }
             }
     }

@@ -37,7 +37,7 @@ struct GameView: View {
 
             #if DEBUG
             if showFPS {
-                FrameCounter(meter: meter)
+                FrameCounter(meter: meter, game: game)
                     .padding(.horizontal, 12)
                     .padding(.bottom, 8)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
