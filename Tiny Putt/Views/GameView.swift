@@ -160,6 +160,37 @@ struct GameView: View {
     }
 }
 
+/// The "Next hole" button on the result card. It fills up as a countdown and moves on by itself
+/// when it is full, so a round flows into the next hole without a tap. Tapping it skips the wait;
+/// leaving the screen (Menu, Finish, Play again) cancels it.
+private struct NextHoleButton: View {
+    let game: GolfGame
+    /// Seconds before it continues on its own.
+    static let delay = 3.0
+    @State private var progress = 0.0
+
+    var body: some View {
+        Button("Next hole") { game.next() }
+            .buttonStyle(PillButtonStyle(prominent: true))
+            .overlay {
+                // One continuous animation (not a state update every few milliseconds), so it
+                // runs at the display's own frame rate.
+                // A plain bar growing from the left, clipped to the button's own capsule, so
+                // it can never poke out past the edge.
+                Rectangle()
+                    .fill(.white.opacity(0.28))
+                    .scaleEffect(x: progress, anchor: .leading)
+                    .clipShape(Capsule())
+                    .allowsHitTesting(false)
+            }
+            .task {
+                withAnimation(.linear(duration: Self.delay)) { progress = 1 }
+                try? await Task.sleep(for: .seconds(Self.delay))
+                if !Task.isCancelled { game.next() }
+            }
+    }
+}
+
 /// What shows after a hole is finished.
 struct ResultCard: View {
     let game: GolfGame
@@ -175,7 +206,7 @@ struct ResultCard: View {
                 Text("\(game.strokes) \(game.strokes == 1 ? "stroke" : "strokes") · par \(game.hole.par)")
                     .font(.system(size: 16, weight: .semibold, design: .rounded))
                     .foregroundStyle(Ink.dark.opacity(0.7))
-                Button("Next hole") { game.next() }.buttonStyle(PillButtonStyle(prominent: true))
+                NextHoleButton(game: game)
                 Button("Play again") { game.replayHole() }.buttonStyle(PillButtonStyle())
                 Button("Menu", action: onExit).buttonStyle(PillButtonStyle())
 
@@ -225,7 +256,7 @@ struct ResultCard: View {
                             .foregroundStyle(Ink.dark)
                         }
                     }
-                    Button("Next hole") { game.next() }.buttonStyle(PillButtonStyle(prominent: true))
+                    NextHoleButton(game: game)
                     Button("Finish", action: onExit).buttonStyle(PillButtonStyle())
                 }
 
