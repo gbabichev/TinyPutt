@@ -49,6 +49,9 @@ nonisolated struct Simulation: Sendable {
     static let sand = 850.0
     static let mud = 1500.0
     static let ice = 35.0
+    /// How much stronger a slope belt pushes than its listed strength. Grass friction is 300, so
+    /// a belt has to be well past that to feel like a conveyor.
+    static let beltBoost = 2.3
 
     let hole: Hole
     var pos: Vec
@@ -98,7 +101,8 @@ nonisolated struct Simulation: Sendable {
             case .sand: friction = Self.sand
             case .mud: friction = Self.mud
             case .ice: friction = Self.ice
-            case .slope(let a), .wind(let a): accel += a
+            case .slope(let a): accel += a * Self.beltBoost
+            case .wind(let a): accel += a
             case .water:
                 events.append(.hazard(.water)); return true
             case .lava:
