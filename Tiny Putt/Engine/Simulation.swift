@@ -163,7 +163,30 @@ nonisolated struct Simulation: Sendable {
             }
         }
 
-        // Windmills: a hub, and blades that carry the ball along when they hit it.
+        collideWindmills(events: &events)
+
+        // The cup takes a ball that is slow enough.
+        let toCup = hole.cup - pos
+        let cupDist = toCup.length
+        if cupDist < Self.cupRadius * 0.9, vel.length < 430 {
+            pos = hole.cup
+            vel = .zero
+            events.append(.sank)
+            return true
+        }
+
+        // Safety net: never lose the ball outside the course (checked every few steps).
+        stepCount &+= 1
+        if stepCount % 6 == 0, !Poly.contains(hole.outline, pos) {
+            events.append(.hazard(.outOfBounds))
+            return true
+        }
+        return false
+    }
+
+    /// Windmills: a hub, and blades that carry the ball along when they hit it.
+    private mutating func collideWindmills(events: inout [SimEvent]) {
+        let r = Self.ballRadius
         for w in hole.windmills {
             let hubD = pos - w.center
             let hubDist = hubD.length
@@ -195,23 +218,12 @@ nonisolated struct Simulation: Sendable {
                 }
             }
         }
+    }
 
-        // The cup takes a ball that is slow enough.
-        let toCup = hole.cup - pos
-        let cupDist = toCup.length
-        if cupDist < Self.cupRadius * 0.9, vel.length < 430 {
-            pos = hole.cup
-            vel = .zero
-            events.append(.sank)
-            return true
-        }
-
-        // Safety net: never lose the ball outside the course (checked every few steps).
-        stepCount &+= 1
-        if stepCount % 6 == 0, !Poly.contains(hole.outline, pos) {
-            events.append(.hazard(.outOfBounds))
-            return true
-        }
-        return false
+    /// A step while the ball sits still: time moves on, and a windmill blade that sweeps into the
+    /// ball knocks it (so a blade never passes through a resting ball).
+    mutating func restStep(events: inout [SimEvent]) {
+        time += Self.dt
+        collideWindmills(events: &events)
     }
 }

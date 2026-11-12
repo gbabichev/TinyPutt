@@ -302,7 +302,23 @@ final class GolfGame {
         for i in bumperPulse.indices where bumperPulse[i] > 0 { bumperPulse[i] = max(0, bumperPulse[i] - dt * 5) }
 
         switch phase {
-        case .aiming, .holed:
+        case .aiming:
+            if hole.windmills.isEmpty {
+                sim.time += dt
+            } else {
+                // A blade that sweeps into the resting ball knocks it: it rolls (no stroke).
+                var events: [SimEvent] = []
+                for _ in 0..<max(1, Int(dt / Simulation.dt)) {
+                    sim.restStep(events: &events)
+                    if sim.isMoving { break }
+                }
+                if sim.isMoving {
+                    cancelAim()
+                    shotStartedByWindmill()
+                    handle(events)
+                }
+            }
+        case .holed:
             sim.time += dt
         case .rolling:
             var events: [SimEvent] = []
@@ -324,6 +340,12 @@ final class GolfGame {
                 phase = .aiming
             }
         }
+    }
+
+    private func shotStartedByWindmill() {
+        sim.shotTime = 0
+        phase = .rolling
+        phaseTime = 0
     }
 
     private func handle(_ events: [SimEvent]) {
