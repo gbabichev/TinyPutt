@@ -47,8 +47,8 @@ final class SoundEngine {
             engine.connect(player, to: engine.mainMixerNode, format: format)
             players.append(player)
         }
-        hitBuffers = [260, 200, 150].map(makeHit)
-        bounceBuffers = [330, 440, 550].map(makeBounce)
+        hitBuffers = [0.15, 0.5, 0.9].map(makeHit)
+        bounceBuffers = [(330.0, 0.15), (440.0, 0.5), (550.0, 0.9)].map { makeBounce(frequency: $0.0, impact: $0.1) }
         bumperBuffer = makeBumper()
         cupBuffer = makeCup()
         splashBuffer = makeSplash()
@@ -126,19 +126,57 @@ final class SoundEngine {
         return buffer
     }
 
-    /// A soft "thock" with a falling pitch and a click of noise.
-    private func makeHit(frequency: Double) -> AVAudioPCMBuffer {
-        render(duration: 0.18) { t in
-            let phase = 2 * Double.pi * frequency * (t + 1.6 * (1 - exp(-40 * t)) / 40)
-            let body = sin(phase) * exp(-t * 28)
-            let click = Double.random(in: -1...1) * exp(-t * 120) * 0.5
-            return (body + click) * 0.6
+    /// A metal putter face striking a golf ball: a sharp click, a short inharmonic metallic ring
+    /// (a struck bar does not ring at a clean pitch, which is what makes it sound like metal and
+    /// not like a synth tone) and a low thump from the ball. A harder hit is louder and brighter.
+    private func makeHit(power: Double) -> AVAudioPCMBuffer {
+        let base = 1700 + 900 * power                       // pitch of the metal ring
+        let ratios: [Double] = [1.0, 2.76, 5.40, 8.93]      // the modes of a struck metal bar
+        let gains: [Double] = [1.0, 0.65, 0.4, 0.22]
+        let decays: [Double] = [70, 95, 140, 200]           // per second: higher modes die first
+        let level = 0.5 + 0.5 * power
+        var lowpass = 0.0
+        return render(duration: 0.28) { t in
+            // The click: a few milliseconds of noise with the low end taken out.
+            let raw = Double.random(in: -1...1)
+            lowpass += (raw - lowpass) * 0.25
+            let click = (raw - lowpass) * exp(-t * 700) * (0.9 + 0.5 * power)
+
+            var ring = 0.0
+            for k in 0..<ratios.count {
+                ring += sin(2 * Double.pi * base * ratios[k] * t) * gains[k] * exp(-t * decays[k])
+            }
+            ring *= 0.22 * (0.6 + 0.6 * power)
+
+            // The ball: a short dull knock, with no pitch sweep.
+            let thump = sin(2 * Double.pi * (150 - 20 * min(1, t * 20)) * t) * exp(-t * 55) * 0.55
+
+            return (click + ring + thump) * level * 0.85
         }
     }
 
-    private func makeBounce(frequency: Double) -> AVAudioPCMBuffer {
-        render(duration: 0.12) { t in
-            sin(2 * Double.pi * frequency * t) * exp(-t * 35) * 0.35
+    /// The ball against a wall: the same family as the putt, but lighter. The old pitched knock
+    /// stays underneath, with a small click on the front and a short, quiet metallic tick.
+    private func makeBounce(frequency: Double, impact: Double) -> AVAudioPCMBuffer {
+        let base = 1300 + 600 * impact
+        let ratios: [Double] = [1.0, 2.76, 5.40]
+        let gains: [Double] = [1.0, 0.55, 0.3]
+        let decays: [Double] = [150, 210, 300]
+        var lowpass = 0.0
+        return render(duration: 0.12) { t in
+            let body = sin(2 * Double.pi * frequency * t) * exp(-t * 35) * 0.3
+
+            let raw = Double.random(in: -1...1)
+            lowpass += (raw - lowpass) * 0.25
+            let click = (raw - lowpass) * exp(-t * 900) * (0.3 + 0.3 * impact)
+
+            var tick = 0.0
+            for k in 0..<ratios.count {
+                tick += sin(2 * Double.pi * base * ratios[k] * t) * gains[k] * exp(-t * decays[k])
+            }
+            tick *= 0.07 * (0.6 + 0.6 * impact)
+
+            return body + click + tick
         }
     }
 
