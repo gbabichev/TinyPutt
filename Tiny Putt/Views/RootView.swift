@@ -12,6 +12,16 @@ struct RootView: View {
     @State private var screen = Screen.home
 
     var body: some View {
+        FullWidth {
+            screens
+        }
+        .animation(.easeInOut(duration: 0.25), value: screen)
+        #if os(macOS)
+        .frame(minWidth: 420, minHeight: 420)
+        #endif
+    }
+
+    private var screens: some View {
         ZStack {
             switch screen {
             case .home:
@@ -36,9 +46,5 @@ struct RootView: View {
                 .transition(.opacity)
             }
         }
-        .animation(.easeInOut(duration: 0.25), value: screen)
-        #if os(macOS)
-        .frame(minWidth: 420, minHeight: 420)
-        #endif
     }
 }

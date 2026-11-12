@@ -8,6 +8,12 @@ import SwiftUI
 struct GameView: View {
     let game: GolfGame
     let onExit: () -> Void
+    @Environment(\.screenInsets) private var insets
+    /// The corner buttons sit the same distance from both side edges: the wider gutter wins.
+    private var side: CGFloat { max(insets.leading, insets.trailing) }
+    /// A tall gutter along the top (the Duo in portrait) holds the clock and Wi-Fi. The HUD moves
+    /// up into it as one compact row, so it neither sits far below nor lands on those icons.
+    private var inStatusStrip: Bool { insets.top > 70 }
     #if DEBUG
     @State private var askingForHole = false
     @State private var holeText = ""
@@ -29,21 +35,25 @@ struct GameView: View {
             }
             .ignoresSafeArea()
 
-            // The buttons stay inside the safe area.
+            // The scoreboard is centred on the whole display; the corner buttons keep clear of the
+            // side gutters (the camera strip), by the insets passed down from the root.
             hud
                 .padding(.horizontal, 12)
                 .padding(.top, 8)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                .ignoresSafeArea(.container, edges: inStatusStrip ? .top : [])
 
             #if DEBUG
             if showFPS {
                 FrameCounter(meter: meter, game: game)
                     .padding(.horizontal, 12)
+                    .padding(.leading, side)
                     .padding(.bottom, 8)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
             }
             debugMenu
                 .padding(.horizontal, 12)
+                .padding(.trailing, side)
                 .padding(.bottom, 8)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
             #endif
@@ -54,7 +64,7 @@ struct GameView: View {
                     .transition(.scale(scale: 0.92))
             }
         }
-        .onGeometryChange(for: CGFloat.self) { $0.safeAreaInsets.top } action: { game.topReserve = $0 + 70 }
+        .onGeometryChange(for: CGFloat.self) { $0.safeAreaInsets.top } action: { game.topReserve = $0 > 70 ? 84 : $0 + 70 }
         .animation(.spring(duration: 0.35), value: game.overlay)
         #if DEBUG
         .alert("Go to hole", isPresented: $askingForHole) {
@@ -98,31 +108,54 @@ struct GameView: View {
     }
     #endif
 
-    private var hud: some View {
-        ZStack(alignment: .top) {
-            VStack(spacing: 2) {
-                Text("HOLE \(game.level) · PAR \(game.hole.par)")
-                    .font(.system(size: 13, weight: .heavy, design: .rounded))
-                    .tracking(1.5)
-                HStack(spacing: 5) {
-                    BallDot(color: game.ballColor, size: 11)
-                    Text("\(game.playerName) · STROKES \(game.strokes)")
-                        .font(.system(size: 11, weight: .bold, design: .rounded))
-                        .opacity(0.65)
-                }
+    private var scoreboard: some View {
+        VStack(spacing: 2) {
+            Text("HOLE \(game.level) · PAR \(game.hole.par)")
+                .font(.system(size: 13, weight: .heavy, design: .rounded))
+                .tracking(1.5)
+            HStack(spacing: 5) {
+                BallDot(color: game.ballColor, size: 11)
+                Text("\(game.playerName) · STROKES \(game.strokes)")
+                    .font(.system(size: 11, weight: .bold, design: .rounded))
+                    .opacity(0.65)
             }
-            .foregroundStyle(Ink.dark)
-            .padding(.horizontal, 18)
-            .padding(.vertical, 8)
-            .background(Capsule().fill(Ink.cream))
-            .overlay(Capsule().stroke(.black.opacity(0.12), lineWidth: 1.5))
-            .shadow(color: .black.opacity(0.18), radius: 0, x: 0, y: 2)
-            HStack {
-                Button(action: onExit) { Image(systemName: "xmark") }
-                Spacer()
-                Button { game.replayHole() } label: { Image(systemName: "arrow.counterclockwise") }
+        }
+        .foregroundStyle(Ink.dark)
+        .padding(.horizontal, 18)
+        .padding(.vertical, 8)
+        .background(Capsule().fill(Ink.cream))
+        .overlay(Capsule().stroke(.black.opacity(0.12), lineWidth: 1.5))
+        .shadow(color: .black.opacity(0.18), radius: 0, x: 0, y: 2)
+    }
+
+    private var exitButton: some View {
+        Button(action: onExit) { Image(systemName: "xmark") }
+    }
+
+    private var restartButton: some View {
+        Button { game.replayHole() } label: { Image(systemName: "arrow.counterclockwise") }
+    }
+
+    @ViewBuilder private var hud: some View {
+        if inStatusStrip {
+            HStack(spacing: 10) {
+                exitButton
+                scoreboard
+                restartButton
             }
             .buttonStyle(RoundButtonStyle())
+            .padding(.top, 14)
+        } else {
+            ZStack(alignment: .top) {
+                scoreboard
+                HStack {
+                    exitButton
+                    Spacer()
+                    restartButton
+                }
+                .padding(.horizontal, side)
+                .buttonStyle(RoundButtonStyle())
+            }
         }
     }
 }
