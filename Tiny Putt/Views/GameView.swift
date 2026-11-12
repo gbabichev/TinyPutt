@@ -11,13 +11,15 @@ struct GameView: View {
     #if DEBUG
     @State private var askingForHole = false
     @State private var holeText = ""
+    @AppStorage("debugShowFPS") private var showFPS = true
+    private let meter = FrameMeter()
     #endif
 
     var body: some View {
         ZStack {
             // The course fills the whole screen, behind the notch and the Duo's side strip.
             GeometryReader { geo in
-                WorldView(game: game)
+                world
                     .contentShape(Rectangle())
                     .gesture(
                         DragGesture(minimumDistance: 0)
@@ -34,6 +36,12 @@ struct GameView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
 
             #if DEBUG
+            if showFPS {
+                FrameCounter(meter: meter)
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 8)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+            }
             debugMenu
                 .padding(.horizontal, 12)
                 .padding(.bottom, 8)
@@ -61,12 +69,21 @@ struct GameView: View {
         #endif
     }
 
+    private var world: some View {
+        #if DEBUG
+        WorldView(game: game, meter: meter)
+        #else
+        WorldView(game: game)
+        #endif
+    }
+
     #if DEBUG
     private var debugMenu: some View {
         Menu {
             Button("Next hole", systemImage: "forward.fill") { game.debugGoToHole(game.level + 1) }
             Button("Previous hole", systemImage: "backward.fill") { game.debugGoToHole(game.level - 1) }
                 .disabled(game.level <= 1)
+            Toggle("Frame rate", systemImage: "speedometer", isOn: $showFPS)
             Button("Go to hole…", systemImage: "flag.fill") {
                 holeText = "\(game.level)"
                 askingForHole = true
@@ -191,17 +208,26 @@ struct ResultCard: View {
 /// game is at rest.
 private struct WorldView: View {
     let game: GolfGame
+    #if DEBUG
+    let meter: FrameMeter
+    #endif
     @State private var frame = 0
 
     var body: some View {
         Canvas { ctx, size in
             // Reading `frame` ties each redraw to the game clock.
             _ = frame
+            #if DEBUG
+            meter.drew()
+            #endif
             HoleRenderer.draw(&ctx, size: size, game: game)
         }
         .task {
             while !Task.isCancelled {
                 game.advance(to: .now)
+                #if DEBUG
+                meter.ticked()
+                #endif
                 frame &+= 1
                 try? await Task.sleep(for: game.isBusy ? .milliseconds(16) : .milliseconds(33))
             }
