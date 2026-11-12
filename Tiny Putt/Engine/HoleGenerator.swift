@@ -89,6 +89,8 @@ nonisolated struct Spine {
 
 nonisolated enum Template: Int, CaseIterable, Sendable {
     case straight, waist, lShape, sBend, uTurn, diagonal, zigzag, room, arena
+    /// A long winding course (appended last so older seeds keep their meaning).
+    case snake
 }
 
 nonisolated enum Middle: Int, CaseIterable, Sendable {
@@ -103,6 +105,8 @@ nonisolated enum Middle: Int, CaseIterable, Sendable {
 
 nonisolated enum Finale: Int, CaseIterable, Sendable {
     case plain, sandRing, waterFlanks, lavaFlanks, bumperGuard, backstop
+    /// Two short pillars either side of the cup (appended last).
+    case pillarGuard
 }
 
 nonisolated struct Generated {
@@ -124,6 +128,7 @@ nonisolated enum HoleGenerator {
     /// A new twist joins the mix every 25 levels from level 51, and stays on.
     enum Twist: Int, CaseIterable {
         case fourObstacles, moreDishes, windingCourses, twoClocks, fasterGadgets, moreHazards
+        case snakeCourses, clusteredGadgets, guardedCup, tighterCourses, fasterStill
     }
 
     static func has(_ twist: Twist, level: Int) -> Bool { level >= 51 + 25 * twist.rawValue }
@@ -136,7 +141,7 @@ nonisolated enum HoleGenerator {
 
         let template = forcedTemplate ?? pickTemplate(tier: tier, level: level, rng: &rng)
         let step = step(forLevel: level)
-        guard let layout = layout(for: template, squeeze: 1 - 0.02 * Double(step), rng: &rng) else { return nil }
+        guard let layout = layout(for: template, squeeze: 1 - (has(.tighterCourses, level: level) ? 0.03 : 0.02) * Double(step), rng: &rng) else { return nil }
         let spine = layout.spine
         var blocks: [[Vec]] = [], patches: [Patch] = []
         var bumpers: [Bumper] = [], windmills: [Windmill] = [], magnets: [Magnet] = []
@@ -145,7 +150,8 @@ nonisolated enum HoleGenerator {
 
         // Obstacles along the way.
         let middles = pickMiddles(tier: tier, step: step, level: level, width: spine.widths.min() ?? 100, first: forcedMiddle, rng: &rng)
-        let first = spine.length * 0.30, last = spine.length * 0.70
+        let clustered = has(.clusteredGadgets, level: level)
+        let first = spine.length * (clustered ? 0.40 : 0.30), last = spine.length * (clustered ? 0.60 : 0.70)
         for (k, kind) in middles.enumerated() {
             let t = middles.count == 1 ? 0.5 : Double(k) / Double(middles.count - 1)
             let s = spine.clear(first + (last - first) * t + rng.range(-25, 25))
@@ -153,7 +159,7 @@ nonisolated enum HoleGenerator {
             b.place(kind, rng: &rng)
             if has(.fasterGadgets, level: level) {
                 // Timed gadgets run a little quicker as the game goes on.
-                let pace = 1 + 0.03 * Double(step)
+                let pace = 1 + (has(.fasterStill, level: level) ? 0.05 : 0.03) * Double(step)
                 for i in b.movers.indices { b.movers[i].speed *= pace }
                 for i in b.windmills.indices { b.windmills[i].speed *= pace }
             }
@@ -220,6 +226,7 @@ nonisolated enum HoleGenerator {
         if tier >= 2 { pool.append(.zigzag) }
         // Winding courses turn up more once that twist is on.
         if has(.windingCourses, level: level) { pool += [.zigzag, .sBend, .uTurn, .lShape] }
+        if has(.snakeCourses, level: level) { pool += [.snake, .snake, .snake] + (step(forLevel: level) >= 4 ? [.snake, .snake] : []) }
         return pool
     }
 
@@ -271,6 +278,7 @@ nonisolated enum HoleGenerator {
     private static func pickFinale(tier: Int, level: Int, width: Double, rng: inout SeededRandom) -> Finale {
         var pool: [Finale] = [.plain, .plain, .sandRing, .backstop, .bumperGuard]
         if has(.moreHazards, level: level), width >= 150 { pool += [.waterFlanks, .lavaFlanks] }
+        if has(.guardedCup, level: level) { pool += [.pillarGuard, .pillarGuard] }
         if width >= 150 { pool += [.waterFlanks]; if tier >= 2 { pool.append(.lavaFlanks) } }
         return rng.pick(pool)
     }
@@ -352,6 +360,12 @@ nonisolated enum HoleGenerator {
             let outline = Poly.rounded(Poly.rect(x, y, w, h), radius: rng.range(40, 110))
             let spine = Spine([Vec(cx, y + h), Vec(cx, y)], widths: [w, w])
             return Layout(spine: spine, outline: outline)
+        case .snake:
+            let w = rng.range(94, 110)
+            let xa = rng.range(130, 150), xb = xa + rng.range(155, 170), xc = xb + rng.range(155, 170)
+            let low = rng.range(740, 790), high = rng.range(150, 200)
+            let spine = narrowed([Vec(xa, low), Vec(xa, high), Vec(xb, high), Vec(xb, low - 40), Vec(xc, low - 40), Vec(xc, high)], widths: [w, w, w, w, w, w])
+            return Layout(spine: spine, outline: band(spine, radius: 22))
         case .arena:
             let rx = rng.range(190, 250), ry = rng.range(290, 350)
             let outline = Poly.ellipse(Vec(cx, 450), rx, ry, steps: 64)
@@ -680,6 +694,9 @@ private nonisolated struct Builder {
             for side in [-1.0, 1.0] { bumpers.append(Bumper(center: frame.at(along: 46, across: side * 34), radius: 18)) }
         case .backstop:
             blocks.append(rect(46, 64, -44, 44, round: 8))
+        case .pillarGuard:
+            blocks.append(rect(30, 52, -50, -30, round: 6))
+            blocks.append(rect(30, 52, 30, 50, round: 6))
         }
     }
 }

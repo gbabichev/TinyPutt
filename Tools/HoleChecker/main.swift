@@ -87,8 +87,8 @@ var accepted: [Accepted] = []
 var seen: [Fingerprint] = HoleLibrary.handMade.map { Fingerprint($0) }
 var templateUse: [Template: Int] = [:]
 var middleUse: [Middle: Int] = [:]
-let templateCap = max(6, (options.to - options.from + 1) / 6)
-let middleCap = max(8, (options.to - options.from + 1) / 4)
+let templateCap = max(6, (options.levels?.count ?? (options.to - options.from + 1)) / 4)
+let middleCap = max(8, (options.levels?.count ?? (options.to - options.from + 1)) / 3)
 
 func isTooSimilar(_ f: Fingerprint) -> Bool {
     for other in seen {
@@ -188,7 +188,12 @@ func maxWideWindow(level: Int) -> Double {
 }
 
 /// How many strokes a level should take at the very least, so the game gets harder as it goes.
-func minimumStrokes(level: Int) -> Int {
+func minimumStrokes(level: Int, template: Template? = nil) -> Int {
+    let step = HoleGenerator.step(forLevel: level)
+    // Only the long winding course can be made to ask for more shots; asking the others for 4 or
+    // 5 just burns attempts (the world is small and a hard shot crosses it). They may still need
+    // more shots naturally, thanks to doors, portals and the like.
+    if level > 50, template == .snake { return step >= 2 ? 4 : 3 }
     switch HoleGenerator.tier(forLevel: level) {
     case 1: return 2
     case 2: return level % 2 == 0 ? 3 : 2
@@ -196,18 +201,20 @@ func minimumStrokes(level: Int) -> Int {
     }
 }
 
-func acceptable(_ r: Report, level: Int, relaxed: Bool, hazardCap: Double = 0.55) -> Bool {
+func acceptable(_ r: Report, level: Int, template: Template, relaxed: Bool, desperate: Bool = false, hazardCap: Double = 0.55) -> Bool {
     guard let optimal = r.optimal else { return false }
     let step = HoleGenerator.step(forLevel: level)
     let maxOptimal = (level <= 25 ? 3 : level <= 38 ? 4 : 5) + step / 2
     // Past the warm-up the stroke count is never relaxed, or the difficulty steps would not hold.
-    let minOptimal = relaxed && step == 0 ? max(2, minimumStrokes(level: level) - 1) : minimumStrokes(level: level)
+    let wanted = minimumStrokes(level: level, template: template)
+    let minOptimal = relaxed ? max(step == 0 ? 2 : 3, wanted - 1) : wanted
     return optimal >= minOptimal && optimal <= maxOptimal
         && r.window >= (relaxed ? 0.15 - 0.01 * Double(step) : 0.22 - 0.015 * Double(step))
         && r.hazardRate <= hazardCap
         && r.trapRate <= 0.2
-        && !r.bypassable
-        && r.wideWindow <= maxWideWindow(level: level)
+        && r.hasWideLane
+        && r.clockSafe
+        && (desperate || (!r.bypassable && r.wideWindow <= maxWideWindow(level: level) && (level <= 50 || r.wideWindow >= 0.3)))
 }
 
 /// Shapes and lead obstacles are dealt out in turn, so every kind turns up about equally often.
@@ -260,7 +267,7 @@ for level in options.levels ?? Array(options.from...options.to) {
             guard let e else { triedInvalid += 1; continue }
             guard let report = e.report else { triedSimilar += 1; continue }
             let crossesWater = e.gen.middles.contains(.bridge) || e.gen.middles.contains(.jump)
-            guard acceptable(report, level: level, relaxed: relaxed, hazardCap: crossesWater ? 0.85 : 0.55), !isTooSimilar(e.fingerprint), !windmillTraps(e.gen.hole) else { triedRejected += 1; continue }
+            guard acceptable(report, level: level, template: e.gen.template, relaxed: relaxed, desperate: attempt > options.attempts * 7 / 8, hazardCap: crossesWater ? 0.85 : 0.55), !isTooSimilar(e.fingerprint), !windmillTraps(e.gen.hole) else { triedRejected += 1; continue }
             // Worlds: the best fit for the recipe that was not used in the last two levels.
             let recent = accepted.suffix(2).map(\.theme)
             let theme = HoleGenerator.themeCandidates(for: e.gen).first { !recent.contains($0) } ?? .meadow

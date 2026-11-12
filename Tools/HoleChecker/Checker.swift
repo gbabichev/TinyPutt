@@ -42,6 +42,11 @@ struct Report {
     var bypassable = false
     /// How much of a wide neighbourhood (±6°, ±12% power) of the winning shot still sinks.
     var wideWindow = 1.0
+    /// Whether there is a lane from tee to cup with room to spare on both sides of the ball.
+    var hasWideLane = true
+    /// False when water or lava lies within reach of a windmill, spinner or moving wall, where a
+    /// knock would send the ball straight into it and a ball can only get past by luck.
+    var clockSafe = true
     /// The winning shots, in order: where each is played from.
     var solution: [(from: Vec, shot: Attempt)] = []
 }
@@ -203,6 +208,117 @@ final class Checker {
         return points
     }
 
+    // MARK: A lane with room to spare
+
+    /// Walks from the tee to the cup over ground at least `clearance` away from every wall, and
+    /// from water and lava (bridges and ramps get the ball over those). A hole where the only way
+    /// through is a gap the ball barely fits is a hole of pixel-perfect shots. Windmills and moving
+    /// gadgets are not counted here: they are timed, not narrow.
+    func hasLane(clearance: Double = 15) -> Bool {
+        let cell = 8.0
+        let cols = Int(hole.size.x / cell) + 1, rows = Int(hole.size.y / cell) + 1
+        let hasRamp = hole.patches.contains { if case .ramp = $0.kind { return true } else { return false } }
+        var free = [Bool](repeating: false, count: cols * rows)
+        let ring: [Vec] = [Vec(1, 0), Vec(-1, 0), Vec(0, 1), Vec(0, -1), Vec(0.7, 0.7), Vec(-0.7, 0.7), Vec(0.7, -0.7), Vec(-0.7, -0.7)].map { $0 * (clearance - 3) }
+        for cy in 0..<rows {
+            for cx in 0..<cols {
+                let p = Vec((Double(cx) + 0.5) * cell, (Double(cy) + 0.5) * cell)
+                guard Poly.contains(hole.outline, p) else { continue }
+                var ok = true
+                for sg in hole.segments where Poly.closestPoint(sg.a, sg.b, to: p).distance(to: p) < clearance { ok = false; break }
+                guard ok else { continue }
+                var bridged = false
+                for patch in hole.patches { if case .bridge = patch.kind, patch.contains(p) { bridged = true } }
+                if !bridged, !hasRamp {
+                    for patch in hole.patches {
+                        switch patch.kind {
+                        case .water, .lava:
+                            if patch.contains(p) { ok = false }
+                            else { for d in ring where patch.contains(p + d) { ok = false; break } }
+                        default: break
+                        }
+                        if !ok { break }
+                    }
+                }
+                free[cy * cols + cx] = ok
+            }
+        }
+        func idx(_ p: Vec) -> Int { max(0, min(rows - 1, Int(p.y / cell))) * cols + max(0, min(cols - 1, Int(p.x / cell))) }
+        var links: [(Int, Int)] = []
+        for pt in hole.portals { let a = idx(pt.a), b = idx(pt.b); free[a] = true; free[b] = true; links.append((a, b)) }
+        let start = idx(hole.tee), goal = idx(hole.cup)
+        free[start] = true; free[goal] = true
+        var seen = [Bool](repeating: false, count: cols * rows)
+        var queue = [start], head = 0
+        seen[start] = true
+        while head < queue.count {
+            let i = queue[head]; head += 1
+            if i == goal { return true }
+            for (a, b) in links { if i == a, !seen[b] { seen[b] = true; queue.append(b) }; if i == b, !seen[a] { seen[a] = true; queue.append(a) } }
+            let cx = i % cols, cy = i / cols
+            for (dx, dy) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+                let nx = cx + dx, ny = cy + dy
+                guard nx >= 0, nx < cols, ny >= 0, ny < rows else { continue }
+                let j = ny * cols + nx
+                if free[j], !seen[j] { seen[j] = true; queue.append(j) }
+            }
+        }
+        return false
+    }
+
+    // MARK: Moving gadgets beside hazards
+
+    func clockNearHazard(margin: Double = 18) -> Bool {
+        let hazards = hole.patches.filter {
+            switch $0.kind { case .water, .lava: return true; default: return false }
+        }
+        guard !hazards.isEmpty else { return false }
+        func hit(_ p: Vec) -> Bool { hazards.contains { $0.contains(p) } }
+        // Bumpers kick the ball about, so hazards must not be close to them either.
+        for b in hole.bumpers {
+            let reach = b.radius + 40
+            var y = -reach
+            while y <= reach {
+                var x = -reach
+                while x <= reach {
+                    if x * x + y * y <= reach * reach, hit(b.center + Vec(x, y)) { return true }
+                    x += 8
+                }
+                y += 8
+            }
+        }
+        for w in hole.windmills {
+            let reach = w.length + margin
+            var y = -reach
+            while y <= reach {
+                var x = -reach
+                while x <= reach {
+                    if x * x + y * y <= reach * reach, hit(w.center + Vec(x, y)) { return true }
+                    x += 8
+                }
+                y += 8
+            }
+        }
+        for m in hole.movers {
+            var lo = Vec(.infinity, .infinity), hi = Vec(-.infinity, -.infinity)
+            let period = 2 * Double.pi / m.speed
+            for k in 0..<16 {
+                let e = m.ends(at: period * Double(k) / 16 - m.phase / m.speed)
+                for p in [e.a, e.b] { lo.x = min(lo.x, p.x); lo.y = min(lo.y, p.y); hi.x = max(hi.x, p.x); hi.y = max(hi.y, p.y) }
+            }
+            var y = lo.y - margin
+            while y <= hi.y + margin {
+                var x = lo.x - margin
+                while x <= hi.x + margin {
+                    if hit(Vec(x, y)) { return true }
+                    x += 8
+                }
+                y += 8
+            }
+        }
+        return false
+    }
+
     // MARK: What a route has to deal with
 
     /// Replays a chain of strokes and notes which features the ball meets (windmill blades,
@@ -359,6 +475,7 @@ final class Checker {
 
     func analyze() -> Report {
         var report = Report()
+        if strict { report.hasWideLane = hasLane(); report.clockSafe = !clockNearHazard() }
 
         // From the tee: how punishing is the ground?
         var hazards = 0, total = 0
