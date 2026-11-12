@@ -49,8 +49,6 @@ nonisolated struct Simulation: Sendable {
     static let sand = 850.0
     static let mud = 1500.0
     static let ice = 35.0
-    /// The least speed a windmill blade gives a ball it hits, away from the blade.
-    static let bladeFlick = 120.0
 
     let hole: Hole
     var pos: Vec
@@ -215,10 +213,6 @@ nonisolated struct Simulation: Sendable {
                     if rn < 0 {
                         rel -= n * (rn * 1.6)
                         vel = rel + surface
-                        // A blade always flicks the ball clear of it, so a ball squeezed between a
-                        // blade and a wall is thrown out instead of being pushed along forever.
-                        let away = vel.dot(n)
-                        if away < Self.bladeFlick { vel += n * (Self.bladeFlick - away) }
                         events.append(.windmill(speed: -rn))
                     }
                 }

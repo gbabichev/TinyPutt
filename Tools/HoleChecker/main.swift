@@ -94,6 +94,28 @@ func isTooSimilar(_ f: Fingerprint) -> Bool {
     return false
 }
 
+/// True if a ball resting near a windmill can get caught by its blades for a long time (for
+/// example wedged between a blade and a wall). Such a hole is rejected.
+func windmillTraps(_ hole: Hole) -> Bool {
+    for w in hole.windmills {
+        for i in 0..<72 {
+            var sim = Simulation(hole: hole)
+            let a = Double(i) / 72 * 2 * .pi
+            sim.pos = w.center + Vec(cos(a), sin(a)) * (20 + Double(i % 6) * (w.length - 15) / 6)
+            if !Poly.contains(hole.outline, sim.pos) || sim.pos.distance(to: hole.cup) < 14 { continue }
+            var events: [SimEvent] = []
+            var inside = 0.0
+            for _ in 0..<(240 * 25) {
+                events.removeAll(keepingCapacity: true)
+                if sim.isMoving { _ = sim.step(events: &events) } else { sim.restStep(events: &events) }
+                if (sim.pos - w.center).length < w.length + 8 { inside += Simulation.dt }
+            }
+            if inside > 12 { return true }
+        }
+    }
+    return false
+}
+
 /// How many strokes a level should take at the very least, so the game gets harder as it goes.
 func minimumStrokes(level: Int) -> Int {
     switch HoleGenerator.tier(forLevel: level) {
@@ -155,7 +177,7 @@ for level in options.from...options.to {
         for e in evals {
             guard let e else { triedInvalid += 1; continue }
             guard let report = e.report else { triedSimilar += 1; continue }
-            guard acceptable(report, level: level, relaxed: relaxed), !isTooSimilar(e.fingerprint) else { triedRejected += 1; continue }
+            guard acceptable(report, level: level, relaxed: relaxed), !isTooSimilar(e.fingerprint), !windmillTraps(e.gen.hole) else { triedRejected += 1; continue }
             // Worlds: the best fit for the recipe that was not used in the last two levels.
             let recent = accepted.suffix(2).map(\.theme)
             let theme = HoleGenerator.themeCandidates(for: e.gen).first { !recent.contains($0) } ?? .meadow
