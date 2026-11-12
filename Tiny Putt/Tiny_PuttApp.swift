@@ -11,7 +11,10 @@ import SwiftUI
 struct Tiny_PuttApp: App {
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            RootView()
         }
+        #if os(macOS)
+        .defaultSize(width: 900, height: 700)
+        #endif
     }
 }

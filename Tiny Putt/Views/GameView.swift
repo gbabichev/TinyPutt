@@ -1,0 +1,161 @@
+//
+//  GameView.swift
+//  Tiny Putt
+//
+
+import SwiftUI
+
+struct GameView: View {
+    let game: GolfGame
+    let onExit: () -> Void
+
+    var body: some View {
+        ZStack {
+            // The course fills the whole screen, behind the notch and the Duo's side strip.
+            GeometryReader { geo in
+                WorldView(game: game)
+                    .contentShape(Rectangle())
+                    .gesture(
+                        DragGesture(minimumDistance: 0)
+                            .onChanged { game.updateAim(start: $0.startLocation, current: $0.location, size: geo.size) }
+                            .onEnded { _ in game.releaseAim() }
+                    )
+            }
+            .ignoresSafeArea()
+
+            // The buttons stay inside the safe area.
+            hud
+                .padding(.horizontal, 12)
+                .padding(.top, 8)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+
+            if game.overlay != .none {
+                Color.black.opacity(0.25).ignoresSafeArea()
+                ResultCard(game: game, onExit: onExit)
+                    .transition(.scale(scale: 0.92))
+            }
+        }
+        .animation(.spring(duration: 0.35), value: game.overlay)
+    }
+
+    private var hud: some View {
+        ZStack(alignment: .top) {
+            VStack(spacing: 8) {
+                VStack(spacing: 2) {
+                    Text("HOLE \(game.level) · PAR \(game.hole.par)")
+                        .font(.system(size: 13, weight: .heavy, design: .rounded))
+                        .tracking(1.5)
+                    Text("STROKES \(game.strokes)")
+                        .font(.system(size: 11, weight: .bold, design: .rounded))
+                        .opacity(0.6)
+                }
+                .foregroundStyle(Ink.dark)
+                .padding(.horizontal, 18)
+                .padding(.vertical, 8)
+                .background(Capsule().fill(Ink.cream))
+                .overlay(Capsule().stroke(.black.opacity(0.12), lineWidth: 1.5))
+                .shadow(color: .black.opacity(0.18), radius: 0, x: 0, y: 2)
+                #if DEBUG
+                .onTapGesture { game.debugSkip(by: 1) }
+                #endif
+
+                HStack(spacing: 6) {
+                    BallDot(color: game.ballColor, size: 14)
+                    Text(game.playerName)
+                        .font(.system(size: 12, weight: .heavy, design: .rounded))
+                        .foregroundStyle(Ink.dark)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(Capsule().fill(Ink.cream.opacity(0.92)))
+            }
+            HStack {
+                Button(action: onExit) { Image(systemName: "xmark") }
+                Spacer()
+                Button { game.replayHole() } label: { Image(systemName: "arrow.counterclockwise") }
+            }
+            .buttonStyle(RoundButtonStyle())
+        }
+    }
+}
+
+/// What shows after a hole is finished.
+struct ResultCard: View {
+    let game: GolfGame
+    let onExit: () -> Void
+
+    var body: some View {
+        Card {
+            switch game.overlay {
+            case .campaignDone:
+                Text(game.scoreTitle)
+                    .font(.system(size: 30, weight: .heavy, design: .rounded))
+                    .foregroundStyle(Ink.dark)
+                Text("\(game.strokes) \(game.strokes == 1 ? "stroke" : "strokes") · par \(game.hole.par)")
+                    .font(.system(size: 16, weight: .semibold, design: .rounded))
+                    .foregroundStyle(Ink.dark.opacity(0.7))
+                Button("Next hole") { game.next() }.buttonStyle(PillButtonStyle(prominent: true))
+                Button("Play again") { game.replayHole() }.buttonStyle(PillButtonStyle())
+                Button("Menu", action: onExit).buttonStyle(PillButtonStyle())
+
+            case .versusTurnDone:
+                if let v = game.versus {
+                    Text("\(game.playerName) · \(game.strokes) \(game.strokes == 1 ? "stroke" : "strokes")")
+                        .font(.system(size: 24, weight: .heavy, design: .rounded))
+                        .foregroundStyle(Ink.dark)
+                    let upNext = game.roster.player(v.order[v.turn + 1])
+                    Button("\(upNext?.name ?? "Next") is up") { game.next() }
+                        .buttonStyle(PillButtonStyle(prominent: true))
+                }
+
+            case .versusHoleDone:
+                if let v = game.versus {
+                    Text("Hole \(game.level)")
+                        .font(.system(size: 24, weight: .heavy, design: .rounded))
+                        .foregroundStyle(Ink.dark)
+                    ForEach(v.order, id: \.self) { id in
+                        if let p = game.roster.player(id) {
+                            HStack {
+                                BallDot(color: p.ball, size: 18)
+                                Text(p.name)
+                                Spacer()
+                                Text("\(v.holeStrokes[id] ?? 0)")
+                                Text("(\(v.totals[id] ?? 0))").opacity(0.55)
+                            }
+                            .font(.system(size: 17, weight: .bold, design: .rounded))
+                            .foregroundStyle(Ink.dark)
+                        }
+                    }
+                    Button("Next hole") { game.next() }.buttonStyle(PillButtonStyle(prominent: true))
+                    Button("Finish", action: onExit).buttonStyle(PillButtonStyle())
+                }
+
+            case .none:
+                EmptyView()
+            }
+        }
+    }
+}
+
+/// The course, drawn on its own so a redraw does not re-evaluate the buttons above it. It also
+/// runs the game clock: about 60 times a second while anything moves, and far less when the
+/// game is at rest.
+private struct WorldView: View {
+    let game: GolfGame
+    @State private var frame = 0
+
+    var body: some View {
+        Canvas { ctx, size in
+            // Reading `frame` ties each redraw to the game clock.
+            _ = frame
+            HoleRenderer.draw(&ctx, size: size, game: game)
+        }
+        .task {
+            while !Task.isCancelled {
+                game.advance(to: .now)
+                frame &+= 1
+                try? await Task.sleep(for: game.isBusy ? .milliseconds(16) : .milliseconds(33))
+            }
+        }
+    }
+}
