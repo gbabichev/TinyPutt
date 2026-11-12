@@ -60,7 +60,7 @@ struct ShotPreview {
 @Observable
 final class GolfGame {
     enum Phase: Equatable { case aiming, rolling, sinking, hazard, holed }
-    enum Overlay: Equatable { case none, campaignDone, versusTurnDone, versusHoleDone }
+    enum Overlay: Equatable { case none, campaignDone, versusTurnDone, versusHoleDone, skipOffer }
 
     /// A head-to-head game on the same holes. Players take turns in a fixed order: each plays
     /// the hole until the ball is in, then the next one goes.
@@ -106,6 +106,9 @@ final class GolfGame {
     @ObservationIgnored private var lastWindmillSound = -1.0
     @ObservationIgnored private var lastBounceHaptic = -1.0
     @ObservationIgnored private var lastCupRattle = -1.0
+    /// The stroke count at which a hole that is going badly offers to be skipped.
+    @ObservationIgnored private var nextSkipOffer = GolfGame.skipAfter
+    static let skipAfter = 12
     @ObservationIgnored private var sceneryCache: (key: String, items: [SceneryItem])?
 
     @ObservationIgnored private let sounds = SoundEngine()
@@ -168,6 +171,7 @@ final class GolfGame {
         strokes = 0
         phase = .aiming
         overlay = .none
+        nextSkipOffer = Self.skipAfter
         aimPull = nil
         estimate = nil
         phaseTime = 0
@@ -333,6 +337,7 @@ final class GolfGame {
             if !ended, phase == .rolling, !sim.isMoving {
                 lastRest = sim.pos
                 phase = .aiming
+                offerSkipIfNeeded()
             }
         case .sinking:
             sim.time += dt
@@ -344,6 +349,7 @@ final class GolfGame {
                 sim.vel = .zero
                 popTime = 0
                 phase = .aiming
+                offerSkipIfNeeded()
             }
         }
     }
@@ -359,6 +365,30 @@ final class GolfGame {
         guard animTime - lastCupRattle > interval else { return }
         lastCupRattle = animTime
         sounds.play(.cupRattle(closeness: 1 - d / reach))
+    }
+
+    /// A hole that has taken a dozen strokes gets an offer to move on (and again every six after
+    /// that, if the player keeps going).
+    private func offerSkipIfNeeded() {
+        guard overlay == .none, strokes >= nextSkipOffer else { return }
+        nextSkipOffer = strokes + 6
+        overlay = .skipOffer
+    }
+
+    /// Gives up on the hole. In a campaign it is passed over with no best recorded; in a versus
+    /// game the player's turn ends with the strokes they have taken.
+    func skipHole() {
+        guard overlay == .skipOffer else { return }
+        if versus != nil {
+            finishHole()
+        } else {
+            roster.skip(level: level, for: roster.current.id)
+            load(level: roster.current.level)
+        }
+    }
+
+    func keepPlaying() {
+        if overlay == .skipOffer { overlay = .none }
     }
 
     private func shotStartedByWindmill() {

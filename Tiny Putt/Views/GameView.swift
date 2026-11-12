@@ -260,6 +260,19 @@ struct ResultCard: View {
                     Button("Finish", action: onExit).buttonStyle(PillButtonStyle())
                 }
 
+            case .skipOffer:
+                Text("Tough hole?")
+                    .font(.system(size: 28, weight: .heavy, design: .rounded))
+                    .foregroundStyle(Ink.dark)
+                Text(game.versus == nil
+                     ? "\(game.strokes) strokes so far. Skip it and move on?"
+                     : "\(game.strokes) strokes so far. Skip it? Your turn ends with those strokes.")
+                    .font(.system(size: 16, weight: .semibold, design: .rounded))
+                    .foregroundStyle(Ink.dark.opacity(0.7))
+                    .multilineTextAlignment(.center)
+                Button("Skip hole") { game.skipHole() }.buttonStyle(PillButtonStyle(prominent: true))
+                Button("Keep playing") { game.keepPlaying() }.buttonStyle(PillButtonStyle())
+
             case .none:
                 EmptyView()
             }

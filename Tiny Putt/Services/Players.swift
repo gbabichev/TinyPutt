@@ -114,6 +114,13 @@ final class PlayerRoster {
         save()
     }
 
+    /// Moves on past a level without finishing it: no best is recorded for it.
+    func skip(level: Int, for id: UUID) {
+        guard let i = players.firstIndex(where: { $0.id == id }) else { return }
+        players[i].level = max(players[i].level, level + 1)
+        save()
+    }
+
     func resetAll() {
         let first = Player(id: UUID(), name: "Player 1", ball: .white)
         players = [first]
