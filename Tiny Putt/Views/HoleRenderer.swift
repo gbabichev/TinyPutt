@@ -252,7 +252,7 @@ enum HoleRenderer {
             inside.stroke(outline, with: .color(pal.lavaGlow.opacity(0.5 + 0.2 * sin(time * 1.1 + seed))), style: StrokeStyle(lineWidth: 2.5, lineJoin: .round))
         case .slope(let a):
             inside.fill(outline, with: .color(.white.opacity(0.10)))
-            chevrons(&inside, patch: patch, dir: Vec(a.x, a.y).normalized, time: time, color: .white.opacity(0.4), spacing: 34, speed: 18)
+            chevrons(&inside, patch: patch, dir: Vec(a.x, a.y).normalized, time: time, color: .white.opacity(0.4), spacing: 34, speed: 50 + a.length * 0.45)
             w.stroke(outline, with: .color(.white.opacity(0.35)), style: StrokeStyle(lineWidth: 2, dash: [6, 5]))
         case .wind(let a):
             for lane in stride(from: 0.0, to: 1.0, by: 0.11) {
