@@ -103,6 +103,7 @@ final class GolfGame {
     @ObservationIgnored private var lastRest = Vec.zero
     @ObservationIgnored private var lastTick: Double?
     @ObservationIgnored private var lastBounceSound = 0.0
+    @ObservationIgnored private var lastWindmillSound = -1.0
     @ObservationIgnored private var sceneryCache: (key: String, items: [SceneryItem])?
 
     @ObservationIgnored private let sounds = SoundEngine()
@@ -288,7 +289,7 @@ final class GolfGame {
     // MARK: - Frame update
 
     /// Whether anything is moving and the canvas must draw at the full frame rate.
-    var isBusy: Bool { phase != .aiming || aimPull != nil || popTime < 1 }
+    var isBusy: Bool { phase != .aiming || aimPull != nil || popTime < 1 || !hole.windmills.isEmpty }
 
     func advance(to date: Date) {
         let now = date.timeIntervalSinceReferenceDate
@@ -360,8 +361,9 @@ final class GolfGame {
                     haptics.bounce(strength: strength)
                 }
             case .windmill(let speed):
-                if animTime - lastBounceSound > 0.05 {
-                    lastBounceSound = animTime
+                // A ball being carried by a blade touches it over and over: one sound per knock.
+                if speed > 50, animTime - lastWindmillSound > 0.4 {
+                    lastWindmillSound = animTime
                     sounds.play(.bounce(impact: min(1, speed / 500)))
                 }
             case .bumper(let index):
