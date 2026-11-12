@@ -270,9 +270,25 @@ enum HoleRenderer {
             let a = Vec(Double(lo.x + hi.x) / 2, Double(lo.y + hi.y) / 2)
             let half = abs(d.x) * Double(hi.x - lo.x) / 2 + abs(d.y) * Double(hi.y - lo.y) / 2
             let p0 = (a - d * half).cg, p1 = (a + d * half).cg
-            w.fill(outline, with: .linearGradient(Gradient(colors: [.black.opacity(0.28), .white.opacity(0.42)]), startPoint: p0, endPoint: p1))
-            chevrons(&inside, patch: patch, dir: d, time: time, color: .white.opacity(0.75), spacing: 22, speed: 28)
-            w.stroke(outline, with: .color(.white.opacity(0.7)), style: StrokeStyle(lineWidth: 2.5, lineJoin: .round))
+            w.fill(outline, with: .linearGradient(Gradient(colors: [.black.opacity(0.40), .white.opacity(0.55)]), startPoint: p0, endPoint: p1))
+            chevrons(&inside, patch: patch, dir: d, time: time, color: .white.opacity(0.85), spacing: 22, speed: 28)
+            // A bright lip at the far end, where the ball takes off, with hazard-style stripes.
+            let across = d.perp
+            let wide = abs(across.x) * Double(hi.x - lo.x) / 2 + abs(across.y) * Double(hi.y - lo.y) / 2
+            let lipAt = a + d * (half - 7)
+            var lip = Path()
+            lip.move(to: (lipAt + across * wide).cg)
+            lip.addLine(to: (lipAt - across * wide).cg)
+            inside.stroke(lip, with: .color(Color(hex: 0xFFB020)), style: StrokeStyle(lineWidth: 14))
+            inside.stroke(lip, with: .color(.white.opacity(0.95)), style: StrokeStyle(lineWidth: 14, dash: [9, 9]))
+            // Rails down both sides.
+            for side in [-1.0, 1.0] {
+                var rail = Path()
+                rail.move(to: (a - d * half + across * (wide - 2) * side).cg)
+                rail.addLine(to: (a + d * half + across * (wide - 2) * side).cg)
+                inside.stroke(rail, with: .color(.white.opacity(0.8)), style: StrokeStyle(lineWidth: 4))
+            }
+            w.stroke(outline, with: .color(.white.opacity(0.9)), style: StrokeStyle(lineWidth: 2.5, lineJoin: .round))
         case .wind(let a):
             for lane in stride(from: 0.0, to: 1.0, by: 0.11) {
                 let dir = Vec(a.x, a.y).normalized
