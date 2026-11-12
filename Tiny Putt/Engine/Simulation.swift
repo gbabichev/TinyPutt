@@ -62,6 +62,9 @@ nonisolated struct Simulation: Sendable {
     static let beltBoost = 2.3
     /// The outer share of a dish or hill over which its pull eases in from nothing.
     static let bowlRim = 0.3
+    /// Where the ball was (relative to the cup) and how fast it was going when the cup took it.
+    var sankOffset = Vec.zero
+    var sankVel = Vec.zero
     /// The kick a speed pad gives, and how a ramp turns speed into flight time (seconds = speed / this).
     static let boostKick = 330.0
     static let flightDivisor = 1600.0
@@ -340,6 +343,8 @@ nonisolated struct Simulation: Sendable {
             let toCup = hole.cup - pos
             let cupDist = toCup.length
             if cupDist < Self.cupRadius * 0.9, vel.length < 430 {
+                sankOffset = pos - hole.cup
+                sankVel = vel
                 pos = hole.cup
                 vel = .zero
                 events.append(.sank)

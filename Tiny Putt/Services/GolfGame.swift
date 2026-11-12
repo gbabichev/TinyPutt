@@ -59,6 +59,9 @@ struct ShotPreview {
 @MainActor
 @Observable
 final class GolfGame {
+    private var sinkOffset = Vec.zero
+    private var sinkVel = Vec.zero
+
     enum Phase: Equatable { case aiming, rolling, sinking, hazard, holed }
     enum Overlay: Equatable { case none, campaignDone, versusTurnDone, versusHoleDone, skipOffer }
 
@@ -344,7 +347,14 @@ final class GolfGame {
             }
         case .sinking:
             sim.time += dt
-            if phaseTime >= 0.5 { finishHole() }
+            // The ball circles the drain like in a funnel: a damped pull towards the centre,
+            // starting from the speed and spot it was captured at.
+            let k = 110.0, c = 3.5
+            sinkVel += (sinkOffset * -k - sinkVel * c) * dt
+            sinkOffset += sinkVel * dt
+            let r = sinkOffset.length, limit = Simulation.cupRadius * 0.75
+            if r > limit { sinkOffset = sinkOffset * (limit / r) }
+            if phaseTime >= 0.7 { finishHole() }
         case .hazard:
             sim.time += dt
             if phaseTime >= 1.0 {
@@ -452,6 +462,10 @@ final class GolfGame {
             case .sank:
                 phase = .sinking
                 phaseTime = 0
+                sinkOffset = sim.sankOffset
+                sinkVel = sim.sankVel * 0.25
+                let speed = sinkVel.length
+                if speed > 60 { sinkVel = sinkVel * (60 / speed) }
                 sounds.play(.cup)
                 haptics.success()
             case .hazard(let kind):
@@ -511,8 +525,8 @@ final class GolfGame {
     var displayBall: (pos: Vec, scale: Double, lift: Double)? {
         switch phase {
         case .sinking:
-            let t = min(1, phaseTime / 0.4)
-            return (sim.pos, 1 - t * 0.9, 0)
+            let t = max(0, min(1, (phaseTime - 0.25) / 0.45))
+            return (sim.pos + sinkOffset, 1 - t * 0.9, 0)
         case .hazard:
             let t = min(1, phaseTime / 0.35)
             return t >= 1 ? nil : (hazardAt, 1 - t, 0)
