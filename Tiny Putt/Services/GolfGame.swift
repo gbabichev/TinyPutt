@@ -7,35 +7,37 @@ import Foundation
 import Observation
 import SwiftUI
 
-/// Maps the hole's world onto the screen. The whole hole is always visible: it is scaled to fit,
-/// and turned a quarter turn when that makes it bigger (a tall hole in a wide window).
+/// Maps the hole's world onto the screen. The course (not the empty world around it) is scaled to
+/// fill the space left under the scoreboard, and turned a quarter turn when that makes it bigger
+/// (a tall hole in a wide window). The ground around it just carries on past the edges.
 struct ViewTransform {
     let scale: CGFloat
-    let offset: CGPoint
     let rotated: Bool
-    let world: CGSize
+    /// The middle of the course in the world, and where that lands on the screen.
+    private let focus: CGPoint
+    private let anchor: CGPoint
 
-    init(world: Vec, view: CGSize) {
-        let w = CGFloat(world.x), h = CGFloat(world.y)
-        self.world = CGSize(width: w, height: h)
-        let upright = max(0.001, min(view.width / w, view.height / h))
-        let turned = max(0.001, min(view.width / h, view.height / w))
+    init(focus bounds: (lo: Vec, hi: Vec), view: CGSize, topReserve: CGFloat) {
+        let pad = 34.0   // the rim and a little breathing room
+        let fw = CGFloat(bounds.hi.x - bounds.lo.x + 2 * pad), fh = CGFloat(bounds.hi.y - bounds.lo.y + 2 * pad)
+        let availH = max(40, view.height - topReserve)
+        let upright = max(0.001, min(view.width / fw, availH / fh))
+        let turned = max(0.001, min(view.width / fh, availH / fw))
         rotated = turned > upright * 1.1
         scale = rotated ? turned : upright
-        let cw = (rotated ? h : w) * scale
-        let ch = (rotated ? w : h) * scale
-        offset = CGPoint(x: (view.width - cw) / 2, y: (view.height - ch) / 2)
+        focus = CGPoint(x: (bounds.lo.x + bounds.hi.x) / 2, y: (bounds.lo.y + bounds.hi.y) / 2)
+        anchor = CGPoint(x: view.width / 2, y: topReserve + availH / 2)
     }
 
     var affine: CGAffineTransform {
         rotated
-            ? CGAffineTransform(a: 0, b: scale, c: -scale, d: 0, tx: world.height * scale + offset.x, ty: offset.y)
-            : CGAffineTransform(a: scale, b: 0, c: 0, d: scale, tx: offset.x, ty: offset.y)
+            ? CGAffineTransform(a: 0, b: scale, c: -scale, d: 0, tx: scale * focus.y + anchor.x, ty: -scale * focus.x + anchor.y)
+            : CGAffineTransform(a: scale, b: 0, c: 0, d: scale, tx: anchor.x - scale * focus.x, ty: anchor.y - scale * focus.y)
     }
 
     func toWorld(_ p: CGPoint) -> Vec {
-        let u = Double((p.x - offset.x) / scale), v = Double((p.y - offset.y) / scale)
-        return rotated ? Vec(v, Double(world.height) - u) : Vec(u, v)
+        let dx = (p.x - anchor.x) / scale, dy = (p.y - anchor.y) / scale
+        return rotated ? Vec(Double(focus.x + dy), Double(focus.y - dx)) : Vec(Double(focus.x + dx), Double(focus.y + dy))
     }
 
     /// The part of the world that shows on a screen of this size (more than the hole itself).
@@ -206,12 +208,22 @@ final class GolfGame {
         }
     }
 
+    // MARK: - Layout
+
+    /// Room kept clear at the top of the screen for the scoreboard (set by the game screen).
+    @ObservationIgnored var topReserve: CGFloat = 90
+
+    /// How the course sits on a screen of this size.
+    func transform(for size: CGSize) -> ViewTransform {
+        ViewTransform(focus: Poly.bounds(hole.outline), view: size, topReserve: topReserve)
+    }
+
     // MARK: - Aiming
 
     func updateAim(start: CGPoint, current: CGPoint, size: CGSize) {
         guard phase == .aiming, overlay == .none, popTime >= 0.6 else { return }
         if aimPull == nil { sounds.prepare() }
-        let t = ViewTransform(world: hole.size, view: size)
+        let t = transform(for: size)
         let pull = t.toWorld(start) - t.toWorld(current)
         let length = pull.length
         guard length >= Shot.minPull else {

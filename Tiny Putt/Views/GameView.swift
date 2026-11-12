@@ -46,6 +46,7 @@ struct GameView: View {
                     .transition(.scale(scale: 0.92))
             }
         }
+        .onGeometryChange(for: CGFloat.self) { $0.safeAreaInsets.top } action: { game.topReserve = $0 + 70 }
         .animation(.spring(duration: 0.35), value: game.overlay)
         #if DEBUG
         .alert("Go to hole", isPresented: $askingForHole) {
@@ -82,32 +83,23 @@ struct GameView: View {
 
     private var hud: some View {
         ZStack(alignment: .top) {
-            VStack(spacing: 8) {
-                VStack(spacing: 2) {
-                    Text("HOLE \(game.level) · PAR \(game.hole.par)")
-                        .font(.system(size: 13, weight: .heavy, design: .rounded))
-                        .tracking(1.5)
-                    Text("STROKES \(game.strokes)")
+            VStack(spacing: 2) {
+                Text("HOLE \(game.level) · PAR \(game.hole.par)")
+                    .font(.system(size: 13, weight: .heavy, design: .rounded))
+                    .tracking(1.5)
+                HStack(spacing: 5) {
+                    BallDot(color: game.ballColor, size: 11)
+                    Text("\(game.playerName) · STROKES \(game.strokes)")
                         .font(.system(size: 11, weight: .bold, design: .rounded))
-                        .opacity(0.6)
+                        .opacity(0.65)
                 }
-                .foregroundStyle(Ink.dark)
-                .padding(.horizontal, 18)
-                .padding(.vertical, 8)
-                .background(Capsule().fill(Ink.cream))
-                .overlay(Capsule().stroke(.black.opacity(0.12), lineWidth: 1.5))
-                .shadow(color: .black.opacity(0.18), radius: 0, x: 0, y: 2)
-
-                HStack(spacing: 6) {
-                    BallDot(color: game.ballColor, size: 14)
-                    Text(game.playerName)
-                        .font(.system(size: 12, weight: .heavy, design: .rounded))
-                        .foregroundStyle(Ink.dark)
-                }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(Capsule().fill(Ink.cream.opacity(0.92)))
             }
+            .foregroundStyle(Ink.dark)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 8)
+            .background(Capsule().fill(Ink.cream))
+            .overlay(Capsule().stroke(.black.opacity(0.12), lineWidth: 1.5))
+            .shadow(color: .black.opacity(0.18), radius: 0, x: 0, y: 2)
             HStack {
                 Button(action: onExit) { Image(systemName: "xmark") }
                 Spacer()

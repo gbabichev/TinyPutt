@@ -24,7 +24,7 @@ enum HoleRenderer {
         let hole = game.hole
         let pal = hole.theme.palette
         let time = game.animTime
-        let t = ViewTransform(world: hole.size, view: size)
+        let t = game.transform(for: size)
 
         ctx.fill(Path(CGRect(origin: .zero, size: size)), with: .color(pal.rough))
 
@@ -197,34 +197,59 @@ enum HoleRenderer {
             w.stroke(outline, with: .color(pal.stone), style: StrokeStyle(lineWidth: 5, lineJoin: .round))
         case .lava:
             let centre = CGPoint(x: (lo.x + hi.x) / 2, y: (lo.y + hi.y) / 2)
-            let reach = max(hi.x - lo.x, hi.y - lo.y) * 0.62
-            // A warm glow on the ground around it.
-            w.stroke(outline, with: .color(pal.lava.opacity(0.14)), style: StrokeStyle(lineWidth: 34, lineJoin: .round))
-            w.stroke(outline, with: .color(pal.lava.opacity(0.2)), style: StrokeStyle(lineWidth: 20, lineJoin: .round))
+            let spanX = hi.x - lo.x, spanY = hi.y - lo.y
+            let size = min(spanX, spanY)
+            let reach = max(spanX, spanY) * 0.62
+            let seed = Double(lo.x) * 0.013 + Double(lo.y) * 0.007
+            // A faint warm haze on the ground around it.
+            w.stroke(outline, with: .color(pal.lavaGlow.opacity(0.10)), style: StrokeStyle(lineWidth: 30, lineJoin: .round))
+            w.stroke(outline, with: .color(pal.lavaGlow.opacity(0.12)), style: StrokeStyle(lineWidth: 16, lineJoin: .round))
+            // Hot in the middle, cooling to deep red at the edge.
             w.fill(outline, with: .radialGradient(Gradient(colors: [pal.lavaGlow, pal.lava, pal.lavaDeep]), center: centre, startRadius: 0, endRadius: reach))
-            // Cooling crust drifting on top.
-            for i in 0..<5 {
+            // Slow, soft pools of heat that drift about.
+            for i in 0..<3 {
                 let fi = Double(i)
-                let cx = lo.x + (hi.x - lo.x) * CGFloat(0.5 + 0.34 * sin(time * 0.18 + fi * 2.3))
-                let cy = lo.y + (hi.y - lo.y) * CGFloat(0.5 + 0.34 * cos(time * 0.15 + fi * 1.7))
-                let plate = inside.star(center: CGPoint(x: cx, y: cy), outer: 14 + CGFloat(i % 3) * 5, inner: 9 + CGFloat(i % 2) * 3, points: 6, rotation: CGFloat(fi))
-                inside.fill(plate, with: .color(pal.crust.opacity(0.8)))
-                inside.stroke(plate, with: .color(pal.lavaGlow.opacity(0.6)), lineWidth: 1.5)
+                let c = CGPoint(x: centre.x + CGFloat(sin(time * 0.21 + seed + fi * 2.1)) * spanX * 0.26,
+                                y: centre.y + CGFloat(cos(time * 0.17 + seed * 1.3 + fi * 1.7)) * spanY * 0.26)
+                let r = max(size * 0.5, 30)
+                inside.fill(inside.circle(c, r), with: .radialGradient(Gradient(colors: [pal.lavaHot.opacity(0.55), pal.lavaGlow.opacity(0)]), center: c, startRadius: 0, endRadius: r))
             }
-            // Bubbles that swell and pop.
-            for i in 0..<8 {
-                let phase = (time * 0.45 + Double(i) * 0.29).truncatingRemainder(dividingBy: 1)
-                let fx = (Double(i) * 0.43 + 0.17).truncatingRemainder(dividingBy: 1)
-                let fy = (Double(i) * 0.71 + 0.11).truncatingRemainder(dividingBy: 1)
-                let c = CGPoint(x: lo.x + (hi.x - lo.x) * fx, y: lo.y + (hi.y - lo.y) * fy)
-                let r = 2 + 8 * CGFloat(phase)
-                inside.stroke(w.circle(c, r), with: .color(pal.lavaHot.opacity(0.9 * (1 - phase))), lineWidth: 2)
-                inside.fill(w.circle(c, r * 0.5), with: .color(pal.lavaHot.opacity(0.5 * (1 - phase))))
+            // Slow, wavy streaks of brighter lava, like a current moving through it.
+            var row = 0
+            var y = lo.y + 10
+            while y < hi.y {
+                var streak = Path()
+                var x = lo.x - 10
+                streak.move(to: CGPoint(x: x, y: y))
+                while x < hi.x + 10 {
+                    x += 6
+                    let wave = sin(Double(x) * 0.05 + time * 0.7 + Double(row) * 1.3 + seed) * 4
+                    streak.addLine(to: CGPoint(x: x, y: y + CGFloat(wave)))
+                }
+                inside.stroke(streak, with: .color(pal.lavaHot.opacity(0.22)), style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                y += 20
+                row += 1
             }
-            // A dark, glowing rim.
-            inside.stroke(outline, with: .color(pal.lavaGlow.opacity(0.7)), style: StrokeStyle(lineWidth: 5, lineJoin: .round))
-            w.stroke(outline, with: .color(pal.crust), style: StrokeStyle(lineWidth: 7, lineJoin: .round))
-            w.stroke(outline, with: .color(pal.lavaDeep), style: StrokeStyle(lineWidth: 2.5, lineJoin: .round))
+            // A few bubbles that swell and pop.
+            for i in 0..<4 {
+                let phase = (time * 0.32 + Double(i) * 0.27 + seed).truncatingRemainder(dividingBy: 1)
+                let fx = (Double(i) * 0.43 + 0.17 + seed * 0.1).truncatingRemainder(dividingBy: 1)
+                let fy = (Double(i) * 0.71 + 0.11 + seed * 0.07).truncatingRemainder(dividingBy: 1)
+                let c = CGPoint(x: lo.x + spanX * (0.15 + 0.7 * CGFloat(fx)), y: lo.y + spanY * (0.15 + 0.7 * CGFloat(fy)))
+                if phase < 0.8 {
+                    let r = 1.5 + 5 * CGFloat(phase / 0.8)
+                    inside.fill(inside.circle(c, r), with: .color(pal.lavaHot.opacity(0.85)))
+                    inside.fill(inside.circle(CGPoint(x: c.x - r * 0.3, y: c.y - r * 0.3), r * 0.35), with: .color(.white.opacity(0.7)))
+                } else {
+                    let t = CGFloat((phase - 0.8) / 0.2)
+                    inside.stroke(inside.circle(c, 6 + 8 * t), with: .color(pal.lavaHot.opacity(0.7 * Double(1 - t))), lineWidth: 1.6)
+                }
+            }
+            // The edge cools to a dark crust with a hot line just inside it.
+            inside.stroke(outline, with: .color(pal.crust.opacity(0.35)), style: StrokeStyle(lineWidth: 22, lineJoin: .round))
+            inside.stroke(outline, with: .color(pal.crust.opacity(0.55)), style: StrokeStyle(lineWidth: 11, lineJoin: .round))
+            w.stroke(outline, with: .color(pal.crust), style: StrokeStyle(lineWidth: 6, lineJoin: .round))
+            inside.stroke(outline, with: .color(pal.lavaGlow.opacity(0.5 + 0.2 * sin(time * 1.1 + seed))), style: StrokeStyle(lineWidth: 2.5, lineJoin: .round))
         case .slope(let a):
             inside.fill(outline, with: .color(.white.opacity(0.10)))
             chevrons(&inside, patch: patch, dir: Vec(a.x, a.y).normalized, time: time, color: .white.opacity(0.4), spacing: 34, speed: 18)

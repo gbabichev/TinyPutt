@@ -10,7 +10,7 @@ import CoreGraphics
 import ImageIO
 import UniformTypeIdentifiers
 
-func writeSheet(_ holes: [Hole], to path: String, columns: Int = 8, cell: Int = 180) {
+func writeSheet(_ holes: [Hole], to path: String, columns: Int = 8, cell: Int = 180, paths shotPaths: [[Vec]] = []) {
     let rows = (holes.count + columns - 1) / columns
     let width = columns * cell, height = rows * cell
     guard let ctx = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
@@ -84,6 +84,14 @@ func writeSheet(_ holes: [Hole], to path: String, columns: Int = 8, cell: Int = 
             }
             ctx.strokePath()
             ctx.setFillColor(color(0xE5484D)); ctx.fillEllipse(in: CGRect(x: c.x - 4, y: c.y - 4, width: 8, height: 8))
+        }
+        let palette: [UInt32] = [0xFFFFFF, 0xFFE066, 0x7DD3FC, 0xF9A8D4, 0xC4B5FD, 0xFDBA74]
+        for (k, route) in shotPaths.enumerated() where holes.count == 1 {
+            ctx.setStrokeColor(color(0x111111, 0.6)); ctx.setLineWidth(5)
+            ctx.addLines(between: route.map(t)); ctx.strokePath()
+            ctx.setStrokeColor(color(palette[k % palette.count])); ctx.setLineWidth(3)
+            ctx.addLines(between: route.map(t)); ctx.strokePath()
+            if let end = route.last { let e = t(end); ctx.setFillColor(color(palette[k % palette.count])); ctx.fillEllipse(in: CGRect(x: e.x - 5, y: e.y - 5, width: 10, height: 10)) }
         }
         let cup = t(h.cup), tee = t(h.tee)
         ctx.setFillColor(color(0x111111)); ctx.fillEllipse(in: CGRect(x: cup.x - 4, y: cup.y - 4, width: 8, height: 8))

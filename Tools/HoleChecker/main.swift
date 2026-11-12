@@ -20,6 +20,7 @@ struct Options {
     var out: String?
     var attempts = 400
     var sheet: String?
+    var solve: Int?
 }
 
 func parse() -> Options {
@@ -31,6 +32,7 @@ func parse() -> Options {
         case "--to": o.to = Int(it.next() ?? "") ?? o.to
         case "--out": o.out = it.next()
         case "--sheet": o.sheet = it.next()
+        case "--solve": o.solve = Int(it.next() ?? "")
         case "--attempts": o.attempts = Int(it.next() ?? "") ?? o.attempts
         default: break
         }
@@ -59,6 +61,24 @@ struct Evaluation {
 }
 
 let options = parse()
+
+// --solve N: show how level N can be beaten (draws the winning shots on the hole).
+if let level = options.solve {
+    let hole = HoleLibrary.hole(forLevel: level)
+    let checker = Checker(hole)
+    let report = checker.analyze()
+    print("Level \(level): optimal \(report.optimal.map(String.init) ?? "none"), window \(report.window)")
+    var routes: [[Vec]] = []
+    for (i, step) in report.solution.enumerated() {
+        let degrees = step.shot.angle * 180 / .pi
+        print(String(format: "  stroke %d: from (%.0f, %.0f) angle %.0f° speed %.0f (pull %.0f%% of max) window offset %.2f",
+                     i + 1, step.from.x, step.from.y, degrees, step.shot.speed,
+                     100 * pow(max(0, (step.shot.speed - Shot.minSpeed) / (Shot.maxSpeed - Shot.minSpeed)), 1 / 1.25), step.shot.offset))
+        routes.append(checker.trace(from: step.from, step.shot))
+    }
+    if let sheet = options.sheet { writeSheet([hole], to: sheet, columns: 1, cell: 900, paths: routes) }
+    exit(0)
+}
 var accepted: [Accepted] = []
 var seen: [Fingerprint] = HoleLibrary.handMade.map { Fingerprint($0) }
 var templateUse: [Template: Int] = [:]

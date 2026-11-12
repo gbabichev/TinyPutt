@@ -374,26 +374,37 @@ private nonisolated struct Builder {
         return Poly.rounded(pts, radius: round)
     }
 
+    /// A rounded pool shape: an ellipse with a gentle wobble so it looks natural, not stamped.
     private func ellipse(along: Double, across: Double, a: Double, b: Double) -> [Vec] {
-        (0..<32).map { i in
-            let t = Double(i) / 32 * 2 * .pi
-            return frame.at(along: along + cos(t) * a, across: across + sin(t) * b)
+        let phase = along * 0.07 + across * 0.031
+        return (0..<40).map { i in
+            let t = Double(i) / 40 * 2 * .pi
+            let wobble = 1 + 0.09 * sin(2 * t + phase) + 0.05 * sin(3 * t - phase * 1.3)
+            return frame.at(along: along + cos(t) * a * wobble, across: across + sin(t) * b * wobble)
         }
     }
 
     // A pond or lava lake that leaves a lane of `lane` along one side.
     private mutating func lake(_ kind: SurfaceKind, side: Double, lane: Double, along: Double, a: Double) {
-        let lo = -w / 2 - 14, hi = w / 2 - lane
-        guard hi - lo > 40 else { return }
-        patches.append(Patch(kind, ellipse(along: along, across: side * (lo + hi) / 2, a: a, b: (hi - lo) / 2)))
+        // The lake sits against one wall and reaches toward the middle, leaving a lane. It is never
+        // wider than it is reasonable for a pool, and never a long thin oval.
+        let wall = side * (-w / 2 - 14)
+        let reach = min(w - lane + 14, 200)
+        guard reach > 40 else { return }
+        let b = reach / 2
+        let alongRadius = min(max(a, b * 0.78), b * 1.4)
+        let centre = wall + side * b
+        patches.append(Patch(kind, ellipse(along: along, across: centre, a: alongRadius, b: b)))
     }
 
     // Two lakes, one on each flank, leaving a channel down the middle.
     private mutating func flanks(_ kind: SurfaceKind, channel: Double, along: Double, a: Double) {
-        let hb = (w / 2 + 14 - channel) / 2
+        let full = (w / 2 + 14 - channel) / 2
+        let hb = min(full, 85)
         guard hb > 14 else { return }
+        let alongRadius = min(max(a, hb * 0.8), hb * 1.4)
         for side in [-1.0, 1.0] {
-            patches.append(Patch(kind, ellipse(along: along, across: side * (channel + hb), a: a, b: hb)))
+            patches.append(Patch(kind, ellipse(along: along, across: side * (w / 2 + 14 - hb), a: alongRadius, b: hb)))
         }
     }
 
@@ -427,7 +438,8 @@ private nonisolated struct Builder {
                 patches.append(Patch(kindOut, Poly.rounded(rect(-rng.range(40, 70), rng.range(40, 70), -w / 2 - 14, w / 2 + 14), radius: 14)))
             } else {
                 let o = rng.range(-w * 0.2, w * 0.2)
-                patches.append(Patch(kindOut, ellipse(along: 0, across: o, a: rng.range(50, 90), b: w * rng.range(0.38, 0.6))))
+                let b = min(w * rng.range(0.38, 0.6), 105)
+                patches.append(Patch(kindOut, ellipse(along: 0, across: o, a: max(rng.range(50, 90), b * 0.7), b: b)))
             }
         case .ice:
             let len = rng.range(110, 190)
@@ -440,8 +452,9 @@ private nonisolated struct Builder {
             }
         case .lava:
             let side = rng.sign()
-            lake(.lava, side: side, lane: rng.range(72, 90), along: -48, a: rng.range(38, 54))
-            lake(.lava, side: -side, lane: rng.range(72, 90), along: 48, a: rng.range(38, 54))
+            let gap = rng.range(55, 75)
+            lake(.lava, side: side, lane: rng.range(72, 90), along: -gap, a: rng.range(38, 54))
+            lake(.lava, side: -side, lane: rng.range(72, 90), along: gap, a: rng.range(38, 54))
         case .bumpers:
             guard w >= 110 else { return }
             let target = tier >= 2 ? rng.int(3, 4) : rng.int(2, 3)

@@ -30,6 +30,8 @@ struct Report {
     /// The share of early resting places the ball cannot get away from.
     var trapRate = 0.0
     var sims = 0
+    /// The winning shots, in order: where each is played from.
+    var solution: [(from: Vec, shot: Attempt)] = []
 }
 
 /// How far each spot is from the cup by walking around the walls.
@@ -140,6 +142,25 @@ final class Checker {
         return .rest(sim.pos)
     }
 
+    /// The route a shot takes (for drawing).
+    func trace(from p: Vec, _ shot: Attempt) -> [Vec] {
+        var sim = Simulation(hole: hole)
+        sim.pos = p
+        sim.time = shot.offset
+        sim.launch(Vec(cos(shot.angle), sin(shot.angle)) * shot.speed)
+        var events: [SimEvent] = []
+        var points = [p]
+        var steps = 0
+        while sim.isMoving, steps < 2400 {
+            events.removeAll(keepingCapacity: true)
+            let ended = sim.step(events: &events)
+            steps += 1
+            if steps % 3 == 0 { points.append(sim.pos) }
+            if ended { points.append(sim.pos); break }
+        }
+        return points
+    }
+
     // MARK: Which shots to try
 
     func coarseShots() -> [Attempt] {
@@ -222,25 +243,26 @@ final class Checker {
         report.hazardRate = Double(hazards) / Double(max(1, total))
 
         var states = [hole.tee]
+        var chains: [[(from: Vec, shot: Attempt)]] = [[]]
         var visited = Set<Int>()
         var earlyStates: [Vec] = []
         let maxDepth = 6
         for depth in 1...maxDepth {
-            var sinks: [(from: Vec, shot: Attempt)] = []
-            var next: [(Vec, Double)] = []
-            for st in states {
+            var sinks: [(from: Vec, shot: Attempt, chain: [(from: Vec, shot: Attempt)])] = []
+            var next: [(Vec, Double, [(from: Vec, shot: Attempt)])] = []
+            for (si, st) in states.enumerated() {
                 var shots = aimedShots(from: st)
                 if depth <= 2 || next.count < 8 { shots += coarseShots() }
                 for shot in shots {
                     switch run(from: st, shot) {
                     case .sank:
-                        if sinks.count < 40 { sinks.append((st, shot)) }
+                        if sinks.count < 40 { sinks.append((st, shot, chains[si])) }
                     case .hazard:
                         break
                     case .rest(let p):
                         if p.distance(to: st) > 25 {
                             let key = Int(p.x / 22) * 1000 + Int(p.y / 22)
-                            if visited.insert(key).inserted { next.append((p, field.at(p))) }
+                            if visited.insert(key).inserted { next.append((p, field.at(p), chains[si] + [(st, shot)])) }
                         }
                     }
                 }
@@ -254,6 +276,7 @@ final class Checker {
                     if regionCanSink(cand.s.from) || cand.s.from == hole.tee {
                         report.optimal = depth
                         report.window = cand.w
+                        report.solution = cand.s.chain + [(cand.s.from, cand.s.shot)]
                         break
                     }
                 }
@@ -261,7 +284,9 @@ final class Checker {
             }
             if depth == 1 { earlyStates = next.map { $0.0 } }
             next.sort { $0.1 < $1.1 }
-            states = next.prefix(26).map { $0.0 }
+            let kept = Array(next.prefix(26))
+            states = kept.map { $0.0 }
+            chains = kept.map { $0.2 }
             if states.isEmpty { break }
         }
 
