@@ -47,10 +47,10 @@ struct ViewTransform {
     }
 }
 
-/// A rough idea of where a shot will end up (never exact: that would be boring).
-struct LandingEstimate {
-    var center: Vec
-    var radius: Double
+/// A rough preview of a shot: the route the ball would take, a little off (never exact: that
+/// would be boring), growing less certain the further it goes.
+struct ShotPreview {
+    var points: [Vec]
 }
 
 /// The whole game: the hole, the ball, the shot being aimed, and who is playing.
@@ -80,7 +80,7 @@ final class GolfGame {
     private(set) var overlay: Overlay = .none
     private(set) var versus: Versus?
     private(set) var aimPull: Vec?
-    private(set) var estimate: LandingEstimate?
+    private(set) var estimate: ShotPreview?
 
     var isSoundOn: Bool {
         didSet { defaults.set(isSoundOn, forKey: Keys.sound); sounds.isEnabled = isSoundOn }
@@ -173,7 +173,16 @@ final class GolfGame {
 
     #if DEBUG
     /// Debug: jumps to another hole without playing.
-    func debugSkip(by delta: Int) { load(level: max(1, level + delta)) }
+    func debugGoToHole(_ n: Int) {
+        let target = max(1, n)
+        if var v = versus {
+            v.level = target
+            v.turn = 0
+            v.holeStrokes = [:]
+            versus = v
+        }
+        load(level: target)
+    }
     #endif
 
     func replayHole() {
@@ -234,21 +243,34 @@ final class GolfGame {
         haptics.hit(power: power)
     }
 
-    /// A deliberately blurry guess: the real result, nudged and shown as a soft circle.
-    private func makeEstimate(for pull: Vec) -> LandingEstimate {
+    /// The route of the shot, but only its first stretch: a short guide that fades out, never
+    /// the whole trip. Nudged slightly so it is a hint rather than a promise.
+    private func makeEstimate(for pull: Vec) -> ShotPreview {
         var probe = sim
+        let power = Shot.power(forPull: pull.length)
         probe.launch(pull.normalized * Shot.speed(forPull: pull.length))
+        let maxLength = 150 + 130 * power
         var events: [SimEvent] = []
+        var points = [probe.pos]
+        var length = 0.0
         var steps = 0
-        while probe.isMoving, steps < 240 * 12 {
-            if probe.step(events: &events) { break }
+        while probe.isMoving, steps < 240 * 12, length < maxLength {
+            let ended = probe.step(events: &events)
             events.removeAll(keepingCapacity: true)
             steps += 1
+            if let last = points.last, probe.pos.distance(to: last) >= 5 {
+                length += probe.pos.distance(to: last)
+                points.append(probe.pos)
+            }
+            if ended { points.append(probe.pos); break }
         }
-        let travelled = probe.pos.distance(to: sim.pos)
-        let radius = 16 + travelled * 0.12
-        let nudge = Vec(sin(pull.x * 0.31 + pull.y * 0.17), cos(pull.x * 0.13 - pull.y * 0.29)) * (radius * 0.45)
-        return LandingEstimate(center: probe.pos + nudge, radius: radius)
+        // The nudge depends only on the slowly changing aim angle, so the route glides as you
+        // drag instead of shimmering.
+        let angle = atan2(pull.y, pull.x)
+        let nudge = Vec(sin(angle * 2 + 1), cos(angle * 1.3)) * (length * 0.03)
+        let n = Double(max(1, points.count - 1))
+        for i in points.indices { points[i] += nudge * (Double(i) / n) }
+        return ShotPreview(points: points)
     }
 
     // MARK: - Frame update

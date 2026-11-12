@@ -8,6 +8,10 @@ import SwiftUI
 struct GameView: View {
     let game: GolfGame
     let onExit: () -> Void
+    #if DEBUG
+    @State private var askingForHole = false
+    @State private var holeText = ""
+    #endif
 
     var body: some View {
         ZStack {
@@ -29,6 +33,13 @@ struct GameView: View {
                 .padding(.top, 8)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
 
+            #if DEBUG
+            debugMenu
+                .padding(.horizontal, 12)
+                .padding(.bottom, 8)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+            #endif
+
             if game.overlay != .none {
                 Color.black.opacity(0.25).ignoresSafeArea()
                 ResultCard(game: game, onExit: onExit)
@@ -36,7 +47,38 @@ struct GameView: View {
             }
         }
         .animation(.spring(duration: 0.35), value: game.overlay)
+        #if DEBUG
+        .alert("Go to hole", isPresented: $askingForHole) {
+            TextField("Hole number", text: $holeText)
+            Button("Go") {
+                if let n = Int(holeText.trimmingCharacters(in: .whitespaces)) { game.debugGoToHole(n) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Any hole from 1 up.")
+        }
+        #endif
     }
+
+    #if DEBUG
+    private var debugMenu: some View {
+        Menu {
+            Button("Next hole", systemImage: "forward.fill") { game.debugGoToHole(game.level + 1) }
+            Button("Previous hole", systemImage: "backward.fill") { game.debugGoToHole(game.level - 1) }
+                .disabled(game.level <= 1)
+            Button("Go to hole…", systemImage: "flag.fill") {
+                holeText = "\(game.level)"
+                askingForHole = true
+            }
+        } label: {
+            Image(systemName: "ladybug.fill")
+        }
+        .menuStyle(.button)
+        .buttonStyle(RoundButtonStyle())
+        .menuIndicator(.hidden)
+        .accessibilityLabel("Debug menu")
+    }
+    #endif
 
     private var hud: some View {
         ZStack(alignment: .top) {
@@ -55,9 +97,6 @@ struct GameView: View {
                 .background(Capsule().fill(Ink.cream))
                 .overlay(Capsule().stroke(.black.opacity(0.12), lineWidth: 1.5))
                 .shadow(color: .black.opacity(0.18), radius: 0, x: 0, y: 2)
-                #if DEBUG
-                .onTapGesture { game.debugSkip(by: 1) }
-                #endif
 
                 HStack(spacing: 6) {
                     BallDot(color: game.ballColor, size: 14)

@@ -107,8 +107,8 @@ nonisolated enum HoleLibrary {
             theme: .desert,
             outline: box(150, 130, 300, 680, radius: 46),
             patches: [
-                Patch(.lava, Poly.ellipse(Vec(225, 470), 90, 65)),
-                Patch(.lava, Poly.ellipse(Vec(385, 380), 80, 60)),
+                Patch(.lava, Poly.ellipse(Vec(150, 490), 125, 85)),
+                Patch(.lava, Poly.ellipse(Vec(450, 370), 125, 85)),
             ],
             tee: Vec(300, 745), cup: Vec(300, 205), par: 3
         )

@@ -36,7 +36,10 @@ enum HoleRenderer {
         }
 
         drawFairway(&w, hole: hole, pal: pal)
-        for patch in hole.patches { drawPatch(&w, patch, pal: pal, time: time) }
+        // Hazards and surfaces are cut off at the edge of the course, never spilling over the rim.
+        var onCourse = w
+        onCourse.clip(to: path(hole.outline))
+        for patch in hole.patches { drawPatch(&onCourse, patch, pal: pal, time: time) }
         drawTee(&w, hole: hole)
         drawCup(&w, hole: hole)
         for block in hole.blocks { drawBlock(&w, block, pal: pal) }
@@ -159,7 +162,12 @@ enum HoleRenderer {
             }
             w.stroke(outline, with: .color(pal.iceEdge), lineWidth: 3)
         case .water:
-            w.fill(outline, with: .color(pal.water))
+            let centre = CGPoint(x: (lo.x + hi.x) / 2, y: (lo.y + hi.y) / 2)
+            let reach = max(hi.x - lo.x, hi.y - lo.y) * 0.6
+            w.fill(outline, with: .radialGradient(Gradient(colors: [pal.waterDeep, pal.water]), center: centre, startRadius: 0, endRadius: reach))
+            // Shallow water along the shore.
+            inside.stroke(outline, with: .color(pal.waterShallow.opacity(0.75)), style: StrokeStyle(lineWidth: 16, lineJoin: .round))
+            inside.stroke(outline, with: .color(pal.waterShallow.opacity(0.5)), style: StrokeStyle(lineWidth: 26, lineJoin: .round))
             var y = lo.y + 8
             var row = 0
             while y < hi.y {
@@ -170,22 +178,52 @@ enum HoleRenderer {
                     x += 6
                     p.addLine(to: CGPoint(x: x, y: y + CGFloat(sin(Double(x) * 0.18 + time * 2 + Double(row))) * 2.2))
                 }
-                inside.stroke(p, with: .color(pal.waterLine.opacity(0.55)), lineWidth: 1.6)
+                inside.stroke(p, with: .color(pal.waterLine.opacity(0.5)), lineWidth: 1.6)
                 y += 13
                 row += 1
             }
-            w.stroke(outline, with: .color(pal.waterEdge), lineWidth: 3.5)
-            w.stroke(outline, with: .color(pal.rim.opacity(0.9)), lineWidth: 1.2)
-        case .lava:
-            w.fill(outline, with: .color(pal.lava))
-            for i in 0..<9 {
-                let fx = Double(i) * 1.7
-                let bx = lo.x + (hi.x - lo.x) * CGFloat(0.5 + 0.42 * sin(time * 0.5 + fx * 2.1))
-                let by = lo.y + (hi.y - lo.y) * CGFloat(0.5 + 0.42 * cos(time * 0.4 + fx * 1.3))
-                inside.fill(w.circle(CGPoint(x: bx, y: by), 9 + CGFloat(i % 3) * 3), with: .color(pal.lavaGlow.opacity(0.75)))
+            // Glints.
+            for i in 0..<6 {
+                let fx = (Double(i) * 0.37 + 0.13).truncatingRemainder(dividingBy: 1)
+                let fy = (Double(i) * 0.61 + 0.29).truncatingRemainder(dividingBy: 1)
+                let a = max(0, sin(time * 2.2 + Double(i) * 1.9))
+                guard a > 0.05 else { continue }
+                let c = CGPoint(x: lo.x + (hi.x - lo.x) * fx, y: lo.y + (hi.y - lo.y) * fy)
+                inside.fill(inside.star(center: c, outer: 5 * CGFloat(a) + 1, inner: 1, points: 4), with: .color(.white.opacity(0.85 * a)))
             }
-            w.stroke(outline, with: .color(pal.lavaEdge), lineWidth: 4)
-            w.stroke(outline, with: .color(pal.lavaGlow.opacity(0.7)), lineWidth: 1.5)
+            // A stone edge.
+            w.stroke(outline, with: .color(pal.stoneShade), style: StrokeStyle(lineWidth: 8, lineJoin: .round))
+            w.stroke(outline, with: .color(pal.stone), style: StrokeStyle(lineWidth: 5, lineJoin: .round))
+        case .lava:
+            let centre = CGPoint(x: (lo.x + hi.x) / 2, y: (lo.y + hi.y) / 2)
+            let reach = max(hi.x - lo.x, hi.y - lo.y) * 0.62
+            // A warm glow on the ground around it.
+            w.stroke(outline, with: .color(pal.lava.opacity(0.14)), style: StrokeStyle(lineWidth: 34, lineJoin: .round))
+            w.stroke(outline, with: .color(pal.lava.opacity(0.2)), style: StrokeStyle(lineWidth: 20, lineJoin: .round))
+            w.fill(outline, with: .radialGradient(Gradient(colors: [pal.lavaGlow, pal.lava, pal.lavaDeep]), center: centre, startRadius: 0, endRadius: reach))
+            // Cooling crust drifting on top.
+            for i in 0..<5 {
+                let fi = Double(i)
+                let cx = lo.x + (hi.x - lo.x) * CGFloat(0.5 + 0.34 * sin(time * 0.18 + fi * 2.3))
+                let cy = lo.y + (hi.y - lo.y) * CGFloat(0.5 + 0.34 * cos(time * 0.15 + fi * 1.7))
+                let plate = inside.star(center: CGPoint(x: cx, y: cy), outer: 14 + CGFloat(i % 3) * 5, inner: 9 + CGFloat(i % 2) * 3, points: 6, rotation: CGFloat(fi))
+                inside.fill(plate, with: .color(pal.crust.opacity(0.8)))
+                inside.stroke(plate, with: .color(pal.lavaGlow.opacity(0.6)), lineWidth: 1.5)
+            }
+            // Bubbles that swell and pop.
+            for i in 0..<8 {
+                let phase = (time * 0.45 + Double(i) * 0.29).truncatingRemainder(dividingBy: 1)
+                let fx = (Double(i) * 0.43 + 0.17).truncatingRemainder(dividingBy: 1)
+                let fy = (Double(i) * 0.71 + 0.11).truncatingRemainder(dividingBy: 1)
+                let c = CGPoint(x: lo.x + (hi.x - lo.x) * fx, y: lo.y + (hi.y - lo.y) * fy)
+                let r = 2 + 8 * CGFloat(phase)
+                inside.stroke(w.circle(c, r), with: .color(pal.lavaHot.opacity(0.9 * (1 - phase))), lineWidth: 2)
+                inside.fill(w.circle(c, r * 0.5), with: .color(pal.lavaHot.opacity(0.5 * (1 - phase))))
+            }
+            // A dark, glowing rim.
+            inside.stroke(outline, with: .color(pal.lavaGlow.opacity(0.7)), style: StrokeStyle(lineWidth: 5, lineJoin: .round))
+            w.stroke(outline, with: .color(pal.crust), style: StrokeStyle(lineWidth: 7, lineJoin: .round))
+            w.stroke(outline, with: .color(pal.lavaDeep), style: StrokeStyle(lineWidth: 2.5, lineJoin: .round))
         case .slope(let a):
             inside.fill(outline, with: .color(.white.opacity(0.10)))
             chevrons(&inside, patch: patch, dir: Vec(a.x, a.y).normalized, time: time, color: .white.opacity(0.4), spacing: 34, speed: 18)
@@ -325,7 +363,8 @@ enum HoleRenderer {
         let ball = game.sim.pos.cg
         let power = Shot.power(forPull: pull.length)
         let dir = pull.normalized
-        let tint = Color(hue: 0.33 * (1 - power), saturation: 0.75, brightness: 0.98)
+        // Yellow when soft, shading to orange-red as the shot gets harder.
+        let tint = Color(hue: 0.005 + 0.15 * (1 - power), saturation: 0.88, brightness: 1.0)
 
         // The power ring around the ball.
         let ringR: CGFloat = 17
@@ -357,14 +396,33 @@ enum HoleRenderer {
         w.stroke(shaft, with: .color(.black.opacity(0.3)), style: StrokeStyle(lineWidth: 7, lineCap: .round))
         w.fill(head, with: .color(.black.opacity(0.3)))
         w.stroke(head, with: .color(.black.opacity(0.3)), style: StrokeStyle(lineWidth: 4, lineJoin: .round))
-        w.stroke(shaft, with: .color(.white), style: StrokeStyle(lineWidth: 4, lineCap: .round))
-        w.fill(head, with: .color(.white))
+        w.stroke(shaft, with: .color(tint), style: StrokeStyle(lineWidth: 3.5, lineCap: .round))
+        w.fill(head, with: .color(tint))
 
-        // A rough idea of where it will stop.
-        if let e = game.estimate {
-            let c = e.center.cg
-            w.fill(w.circle(c, CGFloat(e.radius)), with: .color(.white.opacity(0.16)))
-            w.stroke(w.circle(c, CGFloat(e.radius)), with: .color(.white.opacity(0.8)), style: StrokeStyle(lineWidth: 2, dash: [5, 5]))
+        // A fine dotted route in the same colour, fading away along its length.
+        if let preview = game.estimate, preview.points.count > 1 {
+            let skip = 26 + 18 + 70 * power + 14      // keep clear of the arrow
+            let spacing = 7.0
+            var carried = 0.0
+            var travelled = 0.0
+            var total = 0.0
+            for i in 1..<preview.points.count { total += preview.points[i].distance(to: preview.points[i - 1]) }
+            for i in 1..<preview.points.count {
+                let a = preview.points[i - 1], b = preview.points[i]
+                let seg = a.distance(to: b)
+                guard seg > 0 else { continue }
+                var d = spacing - carried
+                while d <= seg {
+                    let p = a + (b - a) * (d / seg)
+                    if p.distance(to: game.sim.pos) > skip {
+                        let t = min(1, (travelled + d) / max(total, 1))
+                        w.fill(w.circle(p.cg, CGFloat(1.7 - 0.5 * t)), with: .color(tint.opacity(0.95 - 0.8 * t)))
+                    }
+                    d += spacing
+                }
+                carried = seg - (d - spacing)
+                travelled += seg
+            }
         }
     }
 }
