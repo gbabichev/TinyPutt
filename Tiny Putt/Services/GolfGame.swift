@@ -104,6 +104,7 @@ final class GolfGame {
     @ObservationIgnored private var lastTick: Double?
     @ObservationIgnored private var lastBounceSound = 0.0
     @ObservationIgnored private var lastWindmillSound = -1.0
+    @ObservationIgnored private var lastBounceHaptic = -1.0
     @ObservationIgnored private var sceneryCache: (key: String, items: [SceneryItem])?
 
     @ObservationIgnored private let sounds = SoundEngine()
@@ -230,14 +231,18 @@ final class GolfGame {
         guard length >= Shot.minPull else {
             aimPull = nil
             estimate = nil
+            haptics.endAim()
             return
         }
         let clamped = pull * min(1, Shot.maxPull / length)
         aimPull = clamped
+        haptics.startAim()
+        haptics.updateAim(power: Shot.power(forPull: length))
         estimate = makeEstimate(for: clamped)
     }
 
     func cancelAim() {
+        haptics.endAim()
         aimPull = nil
         estimate = nil
     }
@@ -349,11 +354,15 @@ final class GolfGame {
             switch event {
             case .wall(let speed):
                 let strength = min(1, speed / 500)
+                // Every wall hit is felt (only a scrape along the wall is skipped).
+                if speed > 20, animTime - lastBounceHaptic > 0.04 {
+                    lastBounceHaptic = animTime
+                    haptics.bounce(strength: strength)
+                }
                 // Don't machine-gun the same sound while the ball scrapes along a wall.
                 if animTime - lastBounceSound > 0.05, strength > 0.08 {
                     lastBounceSound = animTime
                     sounds.play(.bounce(impact: strength))
-                    haptics.bounce(strength: strength)
                 }
             case .windmill(let speed):
                 // A ball being carried by a blade touches it over and over: one sound per knock.
