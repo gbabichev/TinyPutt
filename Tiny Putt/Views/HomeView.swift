@@ -23,8 +23,12 @@ struct HomeView: View {
                 .ignoresSafeArea()
 
             GeometryReader { geo in
-                let isWide = geo.size.width > geo.size.height * 1.1
-                let layout = isWide ? AnyLayout(HStackLayout(spacing: 56)) : AnyLayout(VStackLayout(spacing: 32))
+                let insets = geo.safeAreaInsets
+                // The menu spans the full width (a folded Duo has an empty gutter beside the
+                // screen); side insets are kept only for the wide layout, where a notch could cover it.
+                let fullWidth = geo.size.width + insets.leading + insets.trailing
+                let isWide = fullWidth > geo.size.height * 1.1
+                                let layout = isWide ? AnyLayout(HStackLayout(spacing: 56)) : AnyLayout(VStackLayout(spacing: 32))
                 // Centred when it fits; scrolls on short screens.
                 ScrollView {
                     layout {
@@ -37,6 +41,8 @@ struct HomeView: View {
                 }
                 .scrollBounceBehavior(.basedOnSize)
                 .scrollIndicators(.hidden)
+                .padding(.leading, isWide ? 0 : -insets.leading)
+                .padding(.trailing, isWide ? 0 : -insets.trailing)
             }
         }
         .sheet(isPresented: $showingSettings) { SettingsView(game: game) }
