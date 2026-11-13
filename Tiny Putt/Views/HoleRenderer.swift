@@ -61,6 +61,30 @@ enum HoleRenderer {
         drawFlag(&w, hole: hole, pal: pal, time: time, rotated: t.rotated)
     }
 
+    /// A still picture of a hole for the level list: the course scaled to fill `size`, with every
+    /// obstacle where it starts, and no ball.
+    static func drawThumbnail(_ ctx: inout GraphicsContext, size: CGSize, hole: Hole) {
+        let pal = hole.theme.palette
+        ctx.fill(Path(CGRect(origin: .zero, size: size)), with: .color(pal.rough))
+        // The thumbnail is turned to fit its box, like the real hole, but leaves the flag upright.
+        let t = ViewTransform(focus: Poly.bounds(hole.outline), view: size, topReserve: 0)
+        var w = ctx
+        w.concatenate(t.affine)
+        drawFairway(&w, hole: hole, pal: pal)
+        var onCourse = w
+        onCourse.clip(to: path(hole.outline))
+        for bowl in hole.bowls { drawBowl(&onCourse, bowl, time: 0) }
+        for patch in hole.patches { drawPatch(&onCourse, patch, pal: pal, time: 0) }
+        drawTee(&w, hole: hole)
+        drawCup(&w, hole: hole)
+        for block in hole.blocks { drawBlock(&onCourse, block, pal: pal) }
+        for m in hole.magnets { drawMagnet(&w, m, pal: pal, time: 0) }
+        drawGadgets(&w, &onCourse, hole: hole, doorsOpen: 0, broken: 0, clock: 0, pal: pal, time: 0)
+        for b in hole.bumpers { drawBumper(&w, b, pal: pal, pulse: 0) }
+        for wm in hole.windmills { drawWindmill(&w, wm, pal: pal, time: 0) }
+        drawFlag(&w, hole: hole, pal: pal, time: 0, rotated: t.rotated)
+    }
+
     // MARK: - Ground
 
     private static func drawFairway(_ w: inout GraphicsContext, hole: Hole, pal: Palette) {

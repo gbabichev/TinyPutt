@@ -6,7 +6,7 @@
 import SwiftUI
 
 struct RootView: View {
-    enum Screen { case home, game }
+    enum Screen { case home, levels, game }
 
     @State private var game = GolfGame()
     @State private var screen = Screen.home
@@ -30,19 +30,29 @@ struct RootView: View {
                 HomeView(game: game, onPlay: {
                     game.startCampaign()
                     screen = .game
+                }, onLevels: {
+                    screen = .levels
                 }, onVersus: { order in
                     game.startVersus(order: order)
                     screen = .game
                 })
                 .transition(.opacity)
+            case .levels:
+                LevelsView(game: game, onBack: { screen = .home }, onPlay: { n in
+                    game.startLevel(n)
+                    screen = .game
+                })
+                .transition(.opacity)
             case .game:
                 GameView(game: game) {
-                    screen = .home
+                    // A level picked from the list goes back to the list; everything else to the menu.
+                    let backToLevels = game.isPicked
+                    screen = backToLevels ? .levels : .home
                     // Reset the game only once the course has faded out, so the next hole is
-                    // never seen on the way to the menu.
+                    // never seen on the way out.
                     Task {
                         try? await Task.sleep(for: .milliseconds(350))
-                        if screen == .home { game.leave() }
+                        if screen != .game { game.leave() }
                     }
                 }
                 .transition(.opacity)

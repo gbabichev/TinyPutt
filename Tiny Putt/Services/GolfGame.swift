@@ -84,6 +84,8 @@ final class GolfGame {
     private(set) var phase: Phase = .aiming
     private(set) var overlay: Overlay = .none
     private(set) var versus: Versus?
+    /// True while a level chosen from the level list is being played (replays and out-of-order holes).
+    private(set) var isPicked = false
     /// Ball colours earned by the hole just finished, shown on the result card.
     private(set) var newBalls: [NewBall] = []
     private(set) var aimPull: Vec?
@@ -150,8 +152,19 @@ final class GolfGame {
     /// Plays the level the current player is up to.
     func startCampaign() {
         versus = nil
+        isPicked = false
         load(level: roster.current.level)
     }
+
+    /// Plays any level the player picked from the level list.
+    func startLevel(_ n: Int) {
+        versus = nil
+        isPicked = true
+        load(level: min(max(1, n), HoleLibrary.count))
+    }
+
+    /// Whether a picked level has a level after it.
+    var hasNextPicked: Bool { level < HoleLibrary.count }
 
     /// Players take turns on the same holes, starting from the first player's level.
     func startVersus(order: [UUID]) {
@@ -162,6 +175,7 @@ final class GolfGame {
 
     func leave() {
         versus = nil
+        isPicked = false
         aimPull = nil
         estimate = nil
         lastTick = nil
@@ -216,6 +230,8 @@ final class GolfGame {
             }
             versus = v
             load(level: v.level)
+        } else if isPicked {
+            load(level: min(level + 1, HoleLibrary.count))
         } else {
             load(level: roster.current.level)
         }
@@ -394,6 +410,9 @@ final class GolfGame {
         guard overlay == .skipOffer else { return }
         if versus != nil {
             finishHole(holed: false)
+        } else if isPicked {
+            // A level picked from the list can be passed over without touching the player's place in the campaign.
+            load(level: min(level + 1, HoleLibrary.count))
         } else {
             roster.skip(level: level, for: roster.current.id)
             load(level: roster.current.level)
@@ -506,8 +525,19 @@ final class GolfGame {
             }
             versus = v
         } else {
-            roster.finish(level: level, strokes: strokes, for: roster.current.id)
-            note(roster.recordHole(strokes: strokes, par: hole.par, holed: true, versus: false, for: roster.current.id), for: roster.current.id)
+            let me = roster.current
+            let firstTime = me.best[level] == nil
+            // Holes from the level list only change the player's place in the campaign when they are the level the
+            // player is up to; a replay or an out-of-turn hole just updates the best score.
+            if isPicked, level != me.level {
+                roster.recordBest(level: level, strokes: strokes, for: me.id)
+            } else {
+                roster.finish(level: level, strokes: strokes, for: me.id)
+            }
+            // A replay does not count again towards the ball colours.
+            if !isPicked || firstTime {
+                note(roster.recordHole(strokes: strokes, par: hole.par, holed: true, versus: false, for: me.id), for: me.id)
+            }
             overlay = .campaignDone
         }
     }

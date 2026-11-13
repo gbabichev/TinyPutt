@@ -227,9 +227,18 @@ struct ResultCard: View {
                     .font(.system(size: 16, weight: .semibold, design: .rounded))
                     .foregroundStyle(Ink.dark.opacity(0.7))
                 NewBallBanner(balls: game.newBalls)
-                NextHoleButton(game: game)
-                Button("Play again") { game.replayHole() }.buttonStyle(PillButtonStyle())
-                Button("Menu", action: onExit).buttonStyle(PillButtonStyle())
+                if game.isPicked {
+                    // A hole from the level list: no countdown, the player decides what comes next.
+                    if game.hasNextPicked {
+                        Button("Next level") { game.next() }.buttonStyle(PillButtonStyle(prominent: true))
+                    }
+                    Button("Play again") { game.replayHole() }.buttonStyle(PillButtonStyle())
+                    Button("Levels", action: onExit).buttonStyle(PillButtonStyle())
+                } else {
+                    NextHoleButton(game: game)
+                    Button("Play again") { game.replayHole() }.buttonStyle(PillButtonStyle())
+                    Button("Menu", action: onExit).buttonStyle(PillButtonStyle())
+                }
 
             case .versusTurnDone:
                 if let v = game.versus {

@@ -8,6 +8,7 @@ import SwiftUI
 struct HomeView: View {
     let game: GolfGame
     let onPlay: () -> Void
+    let onLevels: () -> Void
     let onVersus: ([UUID]) -> Void
 
     @State private var showingSettings = false
@@ -62,6 +63,7 @@ struct HomeView: View {
     private var menu: some View {
         VStack(spacing: 14) {
             Button("Play", action: onPlay).buttonStyle(PillButtonStyle(prominent: true))
+            Button("Levels", action: onLevels).buttonStyle(PillButtonStyle())
             Button("Versus") { showingVersus = true }
                 .buttonStyle(PillButtonStyle())
                 .disabled(game.roster.players.count < 2)

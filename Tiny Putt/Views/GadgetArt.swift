@@ -15,20 +15,22 @@ extension HoleRenderer {
 
     /// Everything that is not a surface, a bumper, a magnet or a windmill.
     static func drawGadgets(_ w: inout GraphicsContext, _ onCourse: inout GraphicsContext, game: GolfGame, pal: Palette, time: Double) {
-        let hole = game.hole
-        let sim = game.sim
+        drawGadgets(&w, &onCourse, hole: game.hole, doorsOpen: game.sim.doorsOpen, broken: game.sim.broken, clock: game.sim.time, pal: pal, time: time)
+    }
+
+    static func drawGadgets(_ w: inout GraphicsContext, _ onCourse: inout GraphicsContext, hole: Hole, doorsOpen: UInt32, broken: UInt32, clock: Double, pal: Palette, time: Double) {
         for (i, door) in hole.doors.enumerated() {
-            drawDoor(&onCourse, door, color: doorColors[i % doorColors.count], open: sim.doorsOpen & (1 << UInt32(i)) != 0)
+            drawDoor(&onCourse, door, color: doorColors[i % doorColors.count], open: doorsOpen & (1 << UInt32(i)) != 0)
         }
         for (i, sw) in hole.switches.enumerated() {
-            drawSwitch(&w, sw, color: doorColors[i % doorColors.count], pressed: sim.doorsOpen & (1 << UInt32(i)) != 0)
+            drawSwitch(&w, sw, color: doorColors[i % doorColors.count], pressed: doorsOpen & (1 << UInt32(i)) != 0)
         }
-        for (i, br) in hole.breakables.enumerated() where sim.broken & (1 << UInt32(i)) == 0 {
+        for (i, br) in hole.breakables.enumerated() where broken & (1 << UInt32(i)) == 0 {
             drawBreakable(&onCourse, br, pal: pal)
         }
         for g in hole.oneWays { drawOneWay(&w, g, time: time) }
         for bar in hole.bouncePads { drawBouncePad(&w, bar) }
-        for m in hole.movers { drawMover(&w, &onCourse, m, pal: pal, time: sim.time) }
+        for m in hole.movers { drawMover(&w, &onCourse, m, pal: pal, time: clock) }
         for (i, p) in hole.portals.enumerated() {
             let color = portalColors[i % portalColors.count]
             if p.isTunnel {

@@ -145,6 +145,13 @@ final class PlayerRoster {
         save()
     }
 
+    /// Notes a hole replayed (or played out of turn) from the level list: the personal best, and nothing else.
+    func recordBest(level: Int, strokes: Int, for id: UUID) {
+        guard let i = players.firstIndex(where: { $0.id == id }) else { return }
+        players[i].best[level] = min(players[i].best[level] ?? .max, strokes)
+        save()
+    }
+
     /// Notes a hole that was played: counts it, and returns any ball colours it unlocked.
     /// `holed` is false for a hole that was skipped.
     @discardableResult
