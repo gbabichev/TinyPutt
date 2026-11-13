@@ -1,0 +1,40 @@
+{
+  "fill" : {
+    "solid" : "display-p3:0.24806,0.49171,0.22554,1.00000"
+  },
+  "groups" : [
+    {
+      "layers" : [
+        {
+          "image-name" : "TinyPutt.png",
+          "name" : "TinyPutt",
+          "position" : {
+            "scale" : 1,
+            "translation-in-points" : [
+              25.5,
+              -13
+            ]
+          }
+        }
+      ],
+      "position" : {
+        "scale" : 1.6,
+        "translation-in-points" : [
+          0,
+          0
+        ]
+      },
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.5
+      },
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.3
+      }
+    }
+  ],
+  "supported-platforms" : {
+    "squares" : "shared"
+  }
+}
