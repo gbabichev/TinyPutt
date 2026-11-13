@@ -23,6 +23,7 @@ struct Options {
     var solve: Int?
     var levels: [Int]?
     var samples: String?
+    var audit = false
 }
 
 func parse() -> Options {
@@ -36,6 +37,7 @@ func parse() -> Options {
         case "--sheet": o.sheet = it.next()
         case "--solve": o.solve = Int(it.next() ?? "")
         case "--levels": o.levels = (it.next() ?? "").split(separator: ",").compactMap { Int($0) }
+        case "--audit": o.audit = true
         case "--samples": o.samples = it.next()
         case "--attempts": o.attempts = Int(it.next() ?? "") ?? o.attempts
         default: break
@@ -87,6 +89,17 @@ var accepted: [Accepted] = []
 var seen: [Fingerprint] = HoleLibrary.handMade.map { Fingerprint($0) }
 var templateUse: [Template: Int] = [:]
 var middleUse: [Middle: Int] = [:]
+// --audit: which table entries no longer pass the generator's own checks.
+if options.audit {
+    var bad: [Int] = []
+    for (i, e) in CampaignTable.entries.enumerated() {
+        let level = i + 11
+        if HoleGenerator.make(level: level, seed: e.seed, theme: ThemeID(rawValue: e.theme), par: e.par, template: Template(rawValue: e.template), middle: Middle(rawValue: e.middle)) == nil { bad.append(level) }
+    }
+    print("\(bad.count) of \(CampaignTable.entries.count) entries fail: \(bad)")
+    exit(0)
+}
+
 let templateCap = max(6, (options.levels?.count ?? (options.to - options.from + 1)) / 4)
 let middleCap = max(8, (options.levels?.count ?? (options.to - options.from + 1)) / 3)
 
@@ -193,7 +206,7 @@ func minimumStrokes(level: Int, template: Template? = nil) -> Int {
     // Only the long winding course can be made to ask for more shots; asking the others for 4 or
     // 5 just burns attempts (the world is small and a hard shot crosses it). They may still need
     // more shots naturally, thanks to doors, portals and the like.
-    if level > 50, template == .snake { return step >= 2 ? 4 : 3 }
+    if level > 50, template == .snake || template == .spiral || template == .switchback { return step >= 2 ? 4 : 3 }
     switch HoleGenerator.tier(forLevel: level) {
     case 1: return 2
     case 2: return level % 2 == 0 ? 3 : 2
@@ -201,8 +214,10 @@ func minimumStrokes(level: Int, template: Template? = nil) -> Int {
     }
 }
 
-func acceptable(_ r: Report, level: Int, template: Template, relaxed: Bool, desperate: Bool = false, hazardCap: Double = 0.55) -> Bool {
+func acceptable(_ r: Report, level: Int, template: Template, relaxed: Bool, desperate: Bool = false, lastResort: Bool = false, hazardCap: Double = 0.55) -> Bool {
     guard let optimal = r.optimal else { return false }
+    // The very last attempts take any hole that can be finished and is not a trap, so a slice never stops.
+    if lastResort { return optimal <= 9 && r.window >= 0.1 && r.hazardRate <= 0.85 && r.trapRate <= 0.3 }
     let step = HoleGenerator.step(forLevel: level)
     let maxOptimal = (level <= 25 ? 3 : level <= 38 ? 4 : 5) + step / 2
     // Past the warm-up the stroke count is never relaxed, or the difficulty steps would not hold.
@@ -218,24 +233,28 @@ func acceptable(_ r: Report, level: Int, template: Template, relaxed: Bool, desp
 }
 
 /// Shapes and lead obstacles are dealt out in turn, so every kind turns up about equally often.
-func scheduled(level: Int) -> (Template, Middle) {
+func scheduled(level: Int, shift: Int = 0) -> (Template, Middle) {
     let i = level - options.from
     let shapes = HoleGenerator.templates(tier: HoleGenerator.tier(forLevel: level), level: level)
-    return (shapes[(i * 5) % shapes.count], Middle.allCases[(i * 7 + i / 26) % Middle.allCases.count])
+    return (shapes[(i * 5 + shift) % shapes.count], Middle.allCases[(i * 7 + i / 26) % Middle.allCases.count])
 }
 
 let started = Date()
 for level in options.levels ?? Array(options.from...options.to) {
-    let (wantedTemplate, wantedMiddle) = scheduled(level: level)
+    let (_, wantedMiddle) = scheduled(level: level)
     var attempt = 0
     var found: Accepted?
     var triedSimilar = 0, triedInvalid = 0, triedRejected = 0
     while found == nil, attempt < options.attempts {
         let relaxed = attempt >= options.attempts / 2
+        // If the shape the schedule asked for will not give a hole, try the next shape along.
+        let lateStart = options.attempts * 2 / 3
+        let wantedTemplate = scheduled(level: level, shift: attempt >= lateStart ? 1 + (attempt - lateStart) / 160 : 0).0
         let dropLead = attempt >= (HoleGenerator.step(forLevel: level) > 0 ? options.attempts / 3 : options.attempts * 3 / 4)
         let batch = 8
         var evals = [Evaluation?](repeating: nil, count: batch)
         let base = UInt64(level) * 100_000 + UInt64(attempt)
+        let capped = attempt < options.attempts / 2
         let snapshotSeen = seen
         let snapshotTemplates = templateUse, snapshotMiddles = middleUse
         evals.withUnsafeMutableBufferPointer { buffer in
@@ -245,8 +264,8 @@ for level in options.levels ?? Array(options.from...options.to) {
                 let forced: Middle? = dropLead ? nil : wantedMiddle
                 guard let gen = HoleGenerator.make(level: level, seed: seed, template: wantedTemplate, middle: forced) else { return }
                 if forced != nil, !placed(wantedMiddle, in: gen.hole) { return }
-                if snapshotTemplates[gen.template, default: 0] >= templateCap { return }
-                if gen.middles.contains(where: { snapshotMiddles[$0, default: 0] >= middleCap }) { return }
+                if capped, snapshotTemplates[gen.template, default: 0] >= templateCap { return }
+                if capped, gen.middles.contains(where: { snapshotMiddles[$0, default: 0] >= middleCap }) { return }
                 let fp = Fingerprint(gen.hole)
                 var similar = false
                 for other in snapshotSeen {
@@ -267,7 +286,7 @@ for level in options.levels ?? Array(options.from...options.to) {
             guard let e else { triedInvalid += 1; continue }
             guard let report = e.report else { triedSimilar += 1; continue }
             let crossesWater = e.gen.middles.contains(.bridge) || e.gen.middles.contains(.jump)
-            guard acceptable(report, level: level, template: e.gen.template, relaxed: relaxed, desperate: attempt > options.attempts * 7 / 8, hazardCap: crossesWater ? 0.85 : 0.55), !isTooSimilar(e.fingerprint), !windmillTraps(e.gen.hole) else { triedRejected += 1; continue }
+            guard acceptable(report, level: level, template: e.gen.template, relaxed: relaxed, desperate: attempt > options.attempts * 7 / 8, lastResort: attempt > options.attempts * 15 / 16, hazardCap: crossesWater ? 0.85 : 0.55), !isTooSimilar(e.fingerprint), !windmillTraps(e.gen.hole) else { triedRejected += 1; continue }
             // Worlds: the best fit for the recipe that was not used in the last two levels.
             let recent = accepted.suffix(2).map(\.theme)
             let theme = HoleGenerator.themeCandidates(for: e.gen).first { !recent.contains($0) } ?? .meadow

@@ -91,6 +91,8 @@ nonisolated enum Template: Int, CaseIterable, Sendable {
     case straight, waist, lShape, sBend, uTurn, diagonal, zigzag, room, arena
     /// A long winding course (appended last so older seeds keep their meaning).
     case snake
+    /// More long courses (appended last): a hook that curls inward, and a four-lane switchback.
+    case spiral, switchback
 }
 
 nonisolated enum Middle: Int, CaseIterable, Sendable {
@@ -201,7 +203,8 @@ nonisolated enum HoleGenerator {
             tee: tee, cup: cup, par: par
         )
         hole = randomlyTurned(hole, rng: &rng)
-        guard isValid(hole) else { return nil }
+        // The first 50 levels were play-tested as they are; the fairness rules start after them.
+        guard isValid(hole), level <= 50 || isFair(hole) else { return nil }
         return Generated(hole: hole, template: template, middles: middles, finale: finale)
     }
 
@@ -226,7 +229,10 @@ nonisolated enum HoleGenerator {
         if tier >= 2 { pool.append(.zigzag) }
         // Winding courses turn up more once that twist is on.
         if has(.windingCourses, level: level) { pool += [.zigzag, .sBend, .uTurn, .lShape] }
-        if has(.snakeCourses, level: level) { pool += [.snake, .snake, .snake] + (step(forLevel: level) >= 4 ? [.snake, .snake] : []) }
+        if has(.snakeCourses, level: level) {
+            pool += [.snake, .snake, .snake, .spiral, .switchback]
+            if step(forLevel: level) >= 4 { pool += [.snake, .snake, .spiral, .spiral, .switchback, .switchback] }
+        }
         return pool
     }
 
@@ -366,6 +372,20 @@ nonisolated enum HoleGenerator {
             let low = rng.range(740, 790), high = rng.range(150, 200)
             let spine = narrowed([Vec(xa, low), Vec(xa, high), Vec(xb, high), Vec(xb, low - 40), Vec(xc, low - 40), Vec(xc, high)], widths: [w, w, w, w, w, w])
             return Layout(spine: spine, outline: band(spine, radius: 22))
+        case .spiral:
+            let w = rng.range(90, 104)
+            let xl = rng.range(96, 112), xr = rng.range(488, 504), xi = xl + rng.range(140, 156)
+            let top = rng.range(120, 150), bottom = rng.range(790, 810)
+            let spine = narrowed([Vec(xl, bottom), Vec(xl, top), Vec(xr, top), Vec(xr, bottom), Vec(xi, bottom), Vec(xi, rng.range(330, 400))], widths: [w, w, w, w, w, w])
+            return Layout(spine: spine, outline: band(spine, radius: 22))
+        case .switchback:
+            let w = rng.range(84, 94)
+            let x0 = rng.range(98, 106), step = rng.range(134, 140)
+            let high = rng.range(130, 160), low = rng.range(780, 810)
+            let pts = [Vec(x0, low), Vec(x0, high), Vec(x0 + step, high), Vec(x0 + step, low),
+                       Vec(x0 + 2 * step, low), Vec(x0 + 2 * step, high), Vec(x0 + 3 * step, high), Vec(x0 + 3 * step, low - 120)]
+            let spine = narrowed(pts, widths: Array(repeating: w, count: pts.count))
+            return Layout(spine: spine, outline: band(spine, radius: 22))
         case .arena:
             let rx = rng.range(190, 250), ry = rng.range(290, 350)
             let outline = Poly.ellipse(Vec(cx, 450), rx, ry, steps: 64)
@@ -416,6 +436,47 @@ nonisolated enum HoleGenerator {
             for m in h.movers where Poly.closestPoint(m.p0, m.p1, to: p).distance(to: p) < 50 { return false }
         }
         return h.tee.distance(to: h.cup) > 260
+    }
+
+    /// Placements that would make a shot pixel-perfect or trap the ball, whatever the route.
+    static func isFair(_ h: Hole) -> Bool {
+        // Things the ball has to reach (portal mouths, switches) are never in or at the edge of water, lava, ramps or pads.
+        var keys = h.switches.map(\.center)
+        for pt in h.portals { keys.append(pt.a); keys.append(pt.b) }
+        for p in keys {
+            for patch in h.patches {
+                switch patch.kind {
+                case .water, .lava, .ramp, .boost:
+                    for off in [Vec.zero, Vec(34, 0), Vec(-34, 0), Vec(0, 34), Vec(0, -34), Vec(24, 24), Vec(-24, 24), Vec(24, -24), Vec(-24, -24)] where patch.contains(p + off) { return false }
+                default: break
+                }
+            }
+        }
+        // Bumpers leave room around them, or a ball can be pinned against a wall and kicked for ever.
+        for (i, b) in h.bumpers.enumerated() {
+            for s in h.segments where Poly.closestPoint(s.a, s.b, to: b.center).distance(to: b.center) < b.radius + 30 { return false }
+            for c in h.bumpers[(i + 1)...] where c.center.distance(to: b.center) < b.radius + c.radius + 30 { return false }
+        }
+        // A moving wall never sweeps close to a fixed wall in the middle of the course: the opening between them would be a sliver that comes and goes.
+        var fixed: [Segment] = []
+        for poly in h.blocks { for i in poly.indices { fixed.append(Segment(a: poly[i], b: poly[(i + 1) % poly.count])) } }
+        for d in h.doors { for i in d.outline.indices { fixed.append(Segment(a: d.outline[i], b: d.outline[(i + 1) % d.outline.count])) } }
+        for o in h.oneWays { fixed.append(Segment(a: o.a, b: o.b)) }
+        for m in h.movers {
+            let period = 2 * Double.pi / m.speed
+            for k in 0..<16 {
+                let e = m.ends(at: (Double(k) / 16 * period) - m.phase / m.speed)
+                for s in fixed where segmentDistance(e.a, e.b, s.a, s.b) < m.thickness / 2 + 46 { return false }
+            }
+        }
+        return true
+    }
+
+    private static func segmentDistance(_ a: Vec, _ b: Vec, _ c: Vec, _ d: Vec) -> Double {
+        func cross(_ p: Vec, _ q: Vec, _ r: Vec) -> Double { (q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x) }
+        if (cross(a, b, c) > 0) != (cross(a, b, d) > 0), (cross(c, d, a) > 0) != (cross(c, d, b) > 0) { return 0 }
+        return min(Poly.closestPoint(c, d, to: a).distance(to: a), Poly.closestPoint(c, d, to: b).distance(to: b),
+                   Poly.closestPoint(a, b, to: c).distance(to: c), Poly.closestPoint(a, b, to: d).distance(to: d))
     }
 
     /// No two edges of the polygon cross.

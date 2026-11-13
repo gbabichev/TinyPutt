@@ -75,6 +75,8 @@ nonisolated struct Simulation: Sendable {
     /// Time since the hole began. Windmills turn with it, so it keeps running between shots.
     var time = 0.0
     var shotTime = 0.0
+    /// Bumper kicks in this shot. A ball caught between a bumper and a wall would otherwise be kicked for ever, so after a few the kick fades.
+    private var bumperHits = 0
     private var accumulator = 0.0
     private var stepCount = 0
 
@@ -109,6 +111,7 @@ nonisolated struct Simulation: Sendable {
     mutating func launch(_ velocity: Vec) {
         vel = velocity
         shotTime = 0
+        bumperHits = 0
     }
 
     /// Runs the simulation for `elapsed` seconds in fixed steps. Returns true if the shot ended
@@ -300,7 +303,8 @@ nonisolated struct Simulation: Sendable {
                     pos = b.center + n * (b.radius + r)
                     if vel.dot(n) < 0 {
                         vel -= n * (vel.dot(n) * 2)
-                        let out = min(Shot.maxSpeed, max(vel.length * 0.92 + 120, 340))
+                        bumperHits += 1
+                        let out = bumperHits > 6 ? vel.length * 0.7 : min(Shot.maxSpeed, max(vel.length * 0.92 + 120, 340))
                         vel = vel.normalized * out
                         events.append(.bumper(index: i))
                     }

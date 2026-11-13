@@ -394,10 +394,14 @@ final class Checker {
     /// How much of a wide neighbourhood of a winning shot still sinks.
     func wideWindow(from p: Vec, _ shot: Attempt, progress: Progress) -> Double {
         var hits = 0, total = 0
+        // A player cannot release a shot to the hundredth of a second, so timed gadgets get a little slack too.
+        let times = offsets.count > 1 ? [shot.offset - 0.12, shot.offset, shot.offset + 0.12] : [shot.offset]
         for da in [-6.0, -3.0, 0, 3.0, 6.0] {
             for f in [0.88, 0.94, 1.0, 1.06, 1.12] {
-                total += 1
-                if case .sank = run(from: p, Attempt(angle: shot.angle + da * .pi / 180, speed: min(Shot.maxSpeed, shot.speed * f), offset: shot.offset), progress: progress).outcome { hits += 1 }
+                for t in times {
+                    total += 1
+                    if case .sank = run(from: p, Attempt(angle: shot.angle + da * .pi / 180, speed: min(Shot.maxSpeed, shot.speed * f), offset: t), progress: progress).outcome { hits += 1 }
+                }
             }
         }
         return Double(hits) / Double(total)
