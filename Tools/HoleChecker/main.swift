@@ -24,6 +24,7 @@ struct Options {
     var levels: [Int]?
     var samples: String?
     var audit = false
+    var profile = false
 }
 
 func parse() -> Options {
@@ -38,6 +39,7 @@ func parse() -> Options {
         case "--solve": o.solve = Int(it.next() ?? "")
         case "--levels": o.levels = (it.next() ?? "").split(separator: ",").compactMap { Int($0) }
         case "--audit": o.audit = true
+        case "--profile": o.profile = true
         case "--samples": o.samples = it.next()
         case "--attempts": o.attempts = Int(it.next() ?? "") ?? o.attempts
         default: break
@@ -232,11 +234,67 @@ func acceptable(_ r: Report, level: Int, template: Template, relaxed: Bool, desp
         && (desperate || (!r.bypassable && r.wideWindow <= maxWideWindow(level: level) && (level <= 50 || r.wideWindow >= 0.3)))
 }
 
+/// The first rule a report fails, for the --profile summary.
+func whyNot(_ r: Report, level: Int, template: Template, relaxed: Bool, desperate: Bool, hazardCap: Double) -> String {
+    guard let optimal = r.optimal else { return "unsolved" }
+    let step = HoleGenerator.step(forLevel: level)
+    let maxOptimal = (level <= 25 ? 3 : level <= 38 ? 4 : 5) + step / 2
+    let wanted = minimumStrokes(level: level, template: template)
+    let minOptimal = relaxed ? max(step == 0 ? 2 : 3, wanted - 1) : wanted
+    if optimal < minOptimal { return "too few strokes" }
+    if optimal > maxOptimal { return "too many strokes" }
+    if r.window < (relaxed ? 0.15 - 0.01 * Double(step) : 0.22 - 0.015 * Double(step)) { return "narrow window" }
+    if r.hazardRate > hazardCap { return "hazard rate" }
+    if r.trapRate > 0.2 { return "trap rate" }
+    if !r.hasWideLane { return "no wide lane" }
+    if !r.clockSafe { return "clock near hazard" }
+    if !desperate {
+        if r.bypassable { return "bypassable" }
+        if r.wideWindow > maxWideWindow(level: level) { return "too easy (wide window)" }
+        if level > 50, r.wideWindow < 0.3 { return "precision floor" }
+    }
+    return "other"
+}
+
+var phaseSeconds = [Double](repeating: 0, count: 5)
+var analysed = 0
+var whyCounts: [String: Int] = [:]
+var skipCounts: [String: Int] = [:]
+var generateSeconds = 0.0, wallSeconds = 0.0
+
 /// Shapes and lead obstacles are dealt out in turn, so every kind turns up about equally often.
 func scheduled(level: Int, shift: Int = 0) -> (Template, Middle) {
     let i = level - options.from
     let shapes = HoleGenerator.templates(tier: HoleGenerator.tier(forLevel: level), level: level)
     return (shapes[(i * 5 + shift) % shapes.count], Middle.allCases[(i * 7 + i / 26) % Middle.allCases.count])
+}
+
+/// Hands candidates to the worker threads and collects their results, which are read back in order.
+final class WorkQueue: @unchecked Sendable {
+    private let cond = NSCondition()
+    private var next = 0, consumed = 0, stopped = false
+    private var results: [Int: (Evaluation?, Int)] = [:]
+    let limit: Int, lookahead: Int
+    init(limit: Int, lookahead: Int) { self.limit = limit; self.lookahead = lookahead }
+    /// The next candidate number, or nil when the level is over. Workers do not run far ahead of the reader.
+    func take() -> Int? {
+        cond.lock(); defer { cond.unlock() }
+        while !stopped, next < limit, next >= consumed + lookahead { cond.wait() }
+        guard !stopped, next < limit else { return nil }
+        next += 1
+        return next - 1
+    }
+    func put(_ i: Int, _ e: Evaluation?, _ code: Int) {
+        cond.lock(); results[i] = (e, code); cond.broadcast(); cond.unlock()
+    }
+    func result(at i: Int) -> (Evaluation?, Int) {
+        cond.lock(); defer { cond.unlock() }
+        while results[i] == nil { cond.wait() }
+        consumed = i + 1
+        cond.broadcast()
+        return results.removeValue(forKey: i)!
+    }
+    func stop() { cond.lock(); stopped = true; cond.broadcast(); cond.unlock() }
 }
 
 let started = Date()
@@ -245,56 +303,82 @@ for level in options.levels ?? Array(options.from...options.to) {
     var attempt = 0
     var found: Accepted?
     var triedSimilar = 0, triedInvalid = 0, triedRejected = 0
-    while found == nil, attempt < options.attempts {
-        let relaxed = attempt >= options.attempts / 2
-        // If the shape the schedule asked for will not give a hole, try the next shape along.
-        let lateStart = options.attempts * 2 / 3
-        let wantedTemplate = scheduled(level: level, shift: attempt >= lateStart ? 1 + (attempt - lateStart) / 160 : 0).0
-        let dropLead = attempt >= (HoleGenerator.step(forLevel: level) > 0 ? options.attempts / 3 : options.attempts * 3 / 4)
-        let batch = 8
-        var evals = [Evaluation?](repeating: nil, count: batch)
-        let base = UInt64(level) * 100_000 + UInt64(attempt)
-        let capped = attempt < options.attempts / 2
-        let snapshotSeen = seen
-        let snapshotTemplates = templateUse, snapshotMiddles = middleUse
-        evals.withUnsafeMutableBufferPointer { buffer in
-            let out = buffer
-            DispatchQueue.concurrentPerform(iterations: batch) { i in
-                let seed = base + UInt64(i)
+    let stepNow = HoleGenerator.step(forLevel: level)
+    let lateStart = options.attempts * 2 / 3
+    let snapshotSeen = seen
+    let snapshotTemplates = templateUse, snapshotMiddles = middleUse
+    cancelAnalysis = false
+    let queue = WorkQueue(limit: options.attempts, lookahead: 4 * ProcessInfo.processInfo.activeProcessorCount)
+    let group = DispatchGroup()
+    let levelStart = now()
+    // Every core takes the next candidate as soon as it is free; the results are read in order below, so the
+    // hole that is found is the same one a single core would have found.
+    for _ in 0..<ProcessInfo.processInfo.activeProcessorCount {
+        DispatchQueue.global().async(group: group) {
+            while let i = queue.take() {
+                let relaxed = i >= options.attempts / 2
+                // If the shape the schedule asked for will not give a hole, try the next shape along.
+                let wantedTemplate = scheduled(level: level, shift: i >= lateStart ? 1 + (i - lateStart) / 160 : 0).0
+                let dropLead = i >= (stepNow > 0 ? options.attempts / 3 : options.attempts * 3 / 4)
+                // Holes solved in fewer strokes than this, or only past `maxStrokes`, are turned down anyway, so the search can stop early.
+                let stopBelow: Int, maxStrokes: Int
+                if i > options.attempts * 15 / 16 { stopBelow = 0; maxStrokes = 6 } else {
+                    let wanted = minimumStrokes(level: level, template: wantedTemplate)
+                    stopBelow = relaxed ? max(stepNow == 0 ? 2 : 3, wanted - 1) : wanted
+                    maxStrokes = (level <= 25 ? 3 : level <= 38 ? 4 : 5) + stepNow / 2
+                }
+                let capped = i < options.attempts / 2
+                let seed = UInt64(level) * 100_000 + UInt64(i)
                 let forced: Middle? = dropLead ? nil : wantedMiddle
-                guard let gen = HoleGenerator.make(level: level, seed: seed, template: wantedTemplate, middle: forced) else { return }
-                if forced != nil, !placed(wantedMiddle, in: gen.hole) { return }
-                if capped, snapshotTemplates[gen.template, default: 0] >= templateCap { return }
-                if capped, gen.middles.contains(where: { snapshotMiddles[$0, default: 0] >= middleCap }) { return }
+                guard let gen = HoleGenerator.make(level: level, seed: seed, template: wantedTemplate, middle: forced) else { queue.put(i, nil, 1); continue }
+                if forced != nil, !placed(wantedMiddle, in: gen.hole) { queue.put(i, nil, 2); continue }
+                if capped, snapshotTemplates[gen.template, default: 0] >= templateCap { queue.put(i, nil, 3); continue }
+                if capped, gen.middles.contains(where: { snapshotMiddles[$0, default: 0] >= middleCap }) { queue.put(i, nil, 4); continue }
                 let fp = Fingerprint(gen.hole)
                 var similar = false
                 for other in snapshotSeen {
                     let s = fp.similarity(to: other)
                     if s.shape >= 0.88, s.features >= 0.45 { similar = true; break }
                 }
-                if similar { out[i] = Evaluation(seed: seed, forcedMiddle: forced, gen: gen, fingerprint: fp, report: nil); return }
+                if similar { queue.put(i, Evaluation(seed: seed, forcedMiddle: forced, gen: gen, fingerprint: fp, report: nil), 5); continue }
                 let checker = Checker(gen.hole)
-                if HoleGenerator.step(forLevel: level) > 0 || level > 50 {
+                if stepNow > 0 || level > 50 {
                     checker.strict = true
                     checker.minEngaged = requiredEngagement(level: level)
                 }
-                out[i] = Evaluation(seed: seed, forcedMiddle: forced, gen: gen, fingerprint: fp, report: checker.analyze())
+                checker.stopBelow = stopBelow
+                checker.maxStrokes = maxStrokes
+                queue.put(i, Evaluation(seed: seed, forcedMiddle: forced, gen: gen, fingerprint: fp, report: checker.analyze()), 0)
             }
         }
-        attempt += batch
-        for e in evals {
-            guard let e else { triedInvalid += 1; continue }
-            guard let report = e.report else { triedSimilar += 1; continue }
-            let crossesWater = e.gen.middles.contains(.bridge) || e.gen.middles.contains(.jump)
-            guard acceptable(report, level: level, template: e.gen.template, relaxed: relaxed, desperate: attempt > options.attempts * 7 / 8, lastResort: attempt > options.attempts * 15 / 16, hazardCap: crossesWater ? 0.85 : 0.55), !isTooSimilar(e.fingerprint), !windmillTraps(e.gen.hole) else { triedRejected += 1; continue }
-            // Worlds: the best fit for the recipe that was not used in the last two levels.
-            let recent = accepted.suffix(2).map(\.theme)
-            let theme = HoleGenerator.themeCandidates(for: e.gen).first { !recent.contains($0) } ?? .meadow
-            let par = max(2, (report.optimal ?? 2) + 1)
-            found = Accepted(level: level, seed: e.seed, theme: theme, par: par, gen: e.gen, fingerprint: e.fingerprint, report: report, forcedMiddle: e.forcedMiddle)
-            break
-        }
     }
+    let skipNames = ["", "generator refused (invalid layout / fairness)", "lead obstacle not placed", "template cap", "obstacle cap", "too similar to an earlier hole"]
+    while found == nil, attempt < options.attempts {
+        let (evaluation, code) = queue.result(at: attempt)
+        let relaxed = attempt >= options.attempts / 2
+        attempt += 1
+        if code != 0 { skipCounts[skipNames[code], default: 0] += 1 }
+        guard let e = evaluation else { triedInvalid += 1; continue }
+        guard let report = e.report else { triedSimilar += 1; continue }
+        analysed += 1
+        for k in 0..<5 { phaseSeconds[k] += report.seconds[k] }
+        let crossesWater = e.gen.middles.contains(.bridge) || e.gen.middles.contains(.jump)
+        let desperate = attempt > options.attempts * 7 / 8, lastResort = attempt > options.attempts * 15 / 16
+        let hazardCap = crossesWater ? 0.85 : 0.55
+        if options.profile, !acceptable(report, level: level, template: e.gen.template, relaxed: relaxed, desperate: desperate, lastResort: lastResort, hazardCap: hazardCap) {
+            whyCounts[whyNot(report, level: level, template: e.gen.template, relaxed: relaxed, desperate: desperate, hazardCap: hazardCap), default: 0] += 1
+        }
+        guard acceptable(report, level: level, template: e.gen.template, relaxed: relaxed, desperate: desperate, lastResort: lastResort, hazardCap: hazardCap), !isTooSimilar(e.fingerprint), !windmillTraps(e.gen.hole) else { triedRejected += 1; continue }
+        // Worlds: the best fit for the recipe that was not used in the last two levels.
+        let recent = accepted.suffix(2).map(\.theme)
+        let theme = HoleGenerator.themeCandidates(for: e.gen).first { !recent.contains($0) } ?? .meadow
+        let par = max(2, (report.optimal ?? 2) + 1)
+        found = Accepted(level: level, seed: e.seed, theme: theme, par: par, gen: e.gen, fingerprint: e.fingerprint, report: report, forcedMiddle: e.forcedMiddle)
+    }
+    cancelAnalysis = true
+    queue.stop()
+    group.wait()
+    wallSeconds += now() - levelStart
     if let f = found {
         accepted.append(f)
         seen.append(f.fingerprint)
@@ -310,6 +394,17 @@ for level in options.levels ?? Array(options.from...options.to) {
     }
 }
 print(String(format: "Done in %.0fs.", Date().timeIntervalSince(started)))
+if options.profile {
+    let total = phaseSeconds.reduce(0, +)
+    print(String(format: "\nAnalysed %d holes; %.0f s of work across all cores, %.0f s of batch wall time (%.1f cores busy on average).", analysed, total, wallSeconds, total / max(1, wallSeconds)))
+    for (i, n) in ["lane + clock tests", "hazard scan from the tee", "shot sweeps (the search)", "candidate checks (window, route, wide, region)", "trap test"].enumerated() {
+        print(String(format: "  %-48@ %6.0f s  %4.1f%%  %.2f s per hole", n as NSString, phaseSeconds[i], 100 * phaseSeconds[i] / max(1, total), phaseSeconds[i] / Double(max(1, analysed))))
+    }
+    print("\nCandidates dropped before analysis:")
+    for (k, v) in skipCounts.sorted(by: { $0.value > $1.value }) { print("  \(v)  \(k)") }
+    print("\nAnalysed holes rejected for (first failing rule):")
+    for (k, v) in whyCounts.sorted(by: { $0.value > $1.value }) { print("  \(v)  \(k)") }
+}
 
 if let sheet = options.sheet {
     let holes = accepted.compactMap { a in HoleGenerator.make(level: a.level, seed: a.seed, theme: a.theme, par: a.par, template: a.gen.template, middle: a.forcedMiddle)?.hole }

@@ -49,7 +49,14 @@ struct Report {
     var clockSafe = true
     /// The winning shots, in order: where each is played from.
     var solution: [(from: Vec, shot: Attempt)] = []
+    /// Seconds spent: lane and clock tests, the hazard scan, the shot sweeps, the candidate checks, the trap test.
+    var seconds = [Double](repeating: 0, count: 5)
 }
+
+/// Set once a level has its hole: candidates still being analysed give up at once.
+nonisolated(unsafe) var cancelAnalysis = false
+
+func now() -> Double { Double(DispatchTime.now().uptimeNanoseconds) / 1e9 }
 
 /// How far each spot is from the cup by walking around the walls.
 struct DistanceField {
@@ -146,6 +153,10 @@ final class Checker {
     /// that squeeze through slivers of dry ground are thrown out.
     var minEngaged = 0
     var strict = false
+    /// The search gives up on a hole that is solved in fewer strokes than this (it would be turned down anyway),
+    /// and does not look past `maxStrokes` strokes.
+    var stopBelow = 0
+    var maxStrokes = 6
 
     init(_ hole: Hole) {
         self.hole = hole
@@ -479,15 +490,10 @@ final class Checker {
 
     func analyze() -> Report {
         var report = Report()
+        var mark = now()
+        func lap(_ i: Int) { let t = now(); report.seconds[i] += t - mark; mark = t }
         if strict { report.hasWideLane = hasLane(); report.clockSafe = !clockNearHazard() }
-
-        // From the tee: how punishing is the ground?
-        var hazards = 0, total = 0
-        for s in coarseShots() {
-            total += 1
-            if case .hazard = run(from: hole.tee, s).outcome { hazards += 1 }
-        }
-        report.hazardRate = Double(hazards) / Double(max(1, total))
+        lap(0)
 
         typealias Chain = [(from: Vec, shot: Attempt)]
         var states = [hole.tee]
@@ -495,15 +501,18 @@ final class Checker {
         var chains: [Chain] = [[]]
         var visited = Set<Int>()
         var earlyStates: [(Vec, Progress)] = []
-        let maxDepth = 6
+        let maxDepth = min(6, maxStrokes)
         for depth in 1...maxDepth {
             var sinks: [(from: Vec, progress: Progress, shot: Attempt, chain: Chain)] = []
             var next: [(Vec, Double, Chain, Progress)] = []
             for (si, st) in states.enumerated() {
+                if cancelAnalysis { return report }
                 let pg = progresses[si]
                 var shots = aimedShots(from: st)
                 if depth <= 2 || next.count < 8 { shots += coarseShots() }
                 for shot in shots {
+                    if cancelAnalysis { return report }
+                    if depth < stopBelow, sinks.count >= 6 { break }
                     let result = run(from: st, shot, progress: pg)
                     switch result.outcome {
                     case .sank:
@@ -517,7 +526,17 @@ final class Checker {
                         }
                     }
                 }
-                if sinks.count >= 40 { break }
+                if sinks.count >= (depth < stopBelow ? 6 : 40) { break }
+            }
+            lap(2)
+            if !sinks.isEmpty, depth < stopBelow {
+                // Solved in fewer strokes than the level wants. The hole will be turned down, so only make sure the
+                // solution is a real one (not a lucky shot) and stop, without the costly checks.
+                for s in sinks where window(from: s.from, s.shot, progress: s.progress) >= 0.2 && (regionCanSink(s.from, progress: s.progress) || s.from == hole.tee) {
+                    report.optimal = depth
+                    lap(3); report.sims = sims
+                    return report
+                }
             }
             if !sinks.isEmpty {
                 // Prefer the most forgiving winning shot.
@@ -542,11 +561,16 @@ final class Checker {
                         report.engaged = engaged
                         report.solution = full
                         if strict { report.wideWindow = wideWindow(from: cand.s.from, cand.s.shot, progress: cand.s.progress) }
-                        if !strict { break }
+                        if !strict || depth < stopBelow { break }
                     }
                 }
                 if strict, chosen, let least = routes.min(), least < minEngaged { report.bypassable = true }
-                if report.optimal != nil { break }
+                lap(3)
+                if report.optimal != nil {
+                    // Solved in fewer strokes than the level wants: no need to look any further.
+                    if depth < stopBelow { lap(3); report.sims = sims; return report }
+                    break
+                }
             }
             if depth == 1 { earlyStates = next.map { ($0.0, $0.3) } }
             next.sort { $0.1 < $1.1 }
@@ -556,6 +580,16 @@ final class Checker {
             progresses = kept.map { $0.3 }
             if states.isEmpty { break }
         }
+
+        lap(2)
+        // From the tee: how punishing is the ground?
+        var hazards = 0, total = 0
+        for s in coarseShots() {
+            total += 1
+            if case .hazard = run(from: hole.tee, s).outcome { hazards += 1 }
+        }
+        report.hazardRate = Double(hazards) / Double(max(1, total))
+        lap(1)
 
         // Can the ball get stuck somewhere it started?
         var stuck = 0
@@ -573,6 +607,7 @@ final class Checker {
             if !escaped { stuck += 1 }
         }
         report.trapRate = sample.isEmpty ? 0 : Double(stuck) / Double(sample.count)
+        lap(4)
         report.sims = sims
         return report
     }
